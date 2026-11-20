@@ -1,0 +1,19 @@
+{
+  "name": "obsi-boty",
+  "version": "0.1.0",
+  "description": "Obsi-boty: mascota de escritorio del equipo Obsi que explica código",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

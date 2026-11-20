@@ -1,0 +1,25 @@
+{
+  "name": "obsi-boty-vscode",
+  "displayName": "Obsi-boty",
+  "description": "Le avisa a Obsi-boty (la mascota de escritorio) qué archivo tienes abierto, para que te explique qué hace.",
+  "version": "0.2.0",
+  "publisher": "obsi",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": true },
+    "virtualWorkspaces": false
+  },
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "obsiBoty.explain", "title": "Obsi-boty: explicar este archivo" },
+      { "command": "obsiBoty.tour", "title": "Obsi-boty: tour del proyecto" }
+    ],
+    "keybindings": [
+      { "command": "obsiBoty.explain", "key": "ctrl+alt+o", "when": "editorTextFocus" }
+    ]
+  }
+}
