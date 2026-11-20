@@ -9,8 +9,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const brain = require('./brain');
-const studyPack = require('./pack');
+const brain = require('./cerebro/brain');
+const studyPack = require('./cerebro/pack');
 
 // online = Claude Code is available. Without it (free plan) Obsi-boty runs in "study mode" from the study pack.
 let online = true;
@@ -30,7 +30,7 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 let win = null, bubble = null;
 let dragTimer = null, cursorTimer = null, quizTimer = null;
 let bubbleHeight = 160, bubbleOpen = false;
-let settings = { lastWorkspace: null, quiz: true, toursOffered: {} };
+let settings = { lastWorkspace: null, quiz: true, toursOffered: {}, speak: true, voiceName: 'Raul', autostart: false };
 let lastActivity = Date.now(), lastQuiz = Date.now() - QUIZ_EVERY_MS + QUIZ_FIRST_MS;
 
 // what the VS Code extension last told us
@@ -175,17 +175,23 @@ const post = m => {
   // OBSI_DEBUG=<file>: append every chat message to that file (Electron's console isn't visible on Windows)
   if (process.env.OBSI_DEBUG) try { fs.appendFileSync(process.env.OBSI_DEBUG, `[${m.role}] ${m.tag ? `[${m.tag}] ` : ''}${String(m.text || '').replace(/\s+/g, ' ').slice(0, 170)}${m.actions ? ' | ' + m.actions.map(a => a.label).join(' / ') : ''}\n`); } catch { /* debug only */ }
   if (bubble) bubble.webContents.send('message', m);
+  if (m.role === 'bot' && settings.speak && !m.silent) say(m.text);
 };
+
+// ---------- voice out (Windows voices, offline; spoken from the bubble page) ----------
+function say(text) { if (bubble && text) bubble.webContents.send('speak', { text, voice: settings.voiceName }); }
+function shutUp() { if (bubble) bubble.webContents.send('stop-speaking'); }
+ipcMain.on('speaking', (_e, on) => { dbg(`speaking ${on}`); if (win && !win.isDestroyed()) win.webContents.send('talking', on); });
 const loading = t => bubble && bubble.webContents.send('loading', t);
 
 ipcMain.on('bubble-height', (_e, h) => { bubbleHeight = Math.max(80, Math.min(Math.ceil(h), 520)); placeBubble(); });
 ipcMain.on('bubble-close', () => {
-  hidePanel();
+  hidePanel(); shutUp(); endSim(true);
   if (busy) { brain.cancel(); busy = false; }
   sendState('reposo');
 });
 ipcMain.on('chat-reset', () => {
-  brain.newConversation(); busy = false; endFind();
+  brain.newConversation(); busy = false; endFind(); shutUp(); endSim(true);
   bubble.webContents.send('reset');
   sendState('reposo');
 });
@@ -193,7 +199,12 @@ ipcMain.on('open-file', (_e, { file, line }) => openInVSCode(file, line));
 ipcMain.on('chat-send', (_e, text) => chat(text));
 ipcMain.on('chat-action', (_e, value) => handleAction(value));
 function handleAction(value) {
-  if (value === 'quiz-yes') chat(QUIZ_PROMPT);
+  if (value === 'sim-start') startSim();
+  else if (value === 'sim-skip') answerSim(null);
+  else if (value === 'sim-next') askSimQuestion();
+  else if (value === 'sim-stop') endSim();
+  else if (value.startsWith('simgrade-')) recordSim(value.slice(9));
+  else if (value === 'quiz-yes') chat(QUIZ_PROMPT);
   else if (value === 'find-start') chat(FIND_PROMPT);
   else if (value === 'find-hint') chat('Dame una pista para encontrar el archivo del reto, sin decirme su nombre ni su ruta.');
   else if (value === 'quiz-reveal') offlineReveal(null);
@@ -232,6 +243,7 @@ async function chat(text) {
   openPanel();
   post({ role: 'user', text });
   if (!workspace()) { post({ role: 'bot', kind: 'hint', text: 'Todavía no sé cuál es tu proyecto. Abre un archivo de él en VS Code y vuelve a preguntarme.' }); return; }
+  if (sim && sim.waiting) return answerSim(text);
   if (!online) return offlineChat(text);
   busy = true;
   sendState('pensar');
@@ -437,6 +449,111 @@ function giveUpFind() {
   openInVSCode(f);
 }
 
+// ---------- mock oral defense ("simulacro de defensa oral") ----------
+// 5 questions from the study pack, asked out loud like the jury would. Online: Claude grades your answer
+// against the verified reference answer. Study mode: you see the reference answer and grade yourself.
+let sim = null;            // { total, i, scores:[], q, waiting }
+const SIM_POINTS = { correcto: 1, parcial: 0.5, incorrecto: 0 };
+
+function startSim() {
+  if (busy) return;
+  endFind(); tour = null; pendingQuiz = null;
+  openPanel({ focus: true });
+  post({ role: 'user', text: 'Simulacro de defensa oral' });
+  const p = getPack();
+  if (!p || !p.questions || !p.questions.length) {
+    return post({ role: 'bot', kind: 'hint', text: online
+      ? 'Para el simulacro necesito el paquete de estudio de este proyecto. Genéralo desde mi menú (clic derecho → Generar paquete de estudio).'
+      : 'No tengo paquete de estudio para este proyecto. Pídele a Josué que lo genere y haz "git pull".' });
+  }
+  sim = { total: Math.min(5, p.questions.length), i: 0, scores: [], q: null, waiting: false };
+  sendState('saludar', 'reposo', 2500);
+  post({ role: 'bot', tag: 'Simulacro de defensa oral', text: `Te haré ${sim.total} preguntas como el jurado. Respóndeme como si se lo explicaras a un profesor: con tus palabras, mencionando archivos y decisiones. ${online ? 'Yo te califico.' : 'Al final de cada una te muestro la respuesta y te calificas.'}`,
+    actions: [{ label: '▶ Empezar', value: 'sim-next' }, { label: 'Ahora no', value: 'sim-stop' }] });
+}
+
+const simNextActions = () => sim.i >= sim.total
+  ? [{ label: 'Ver mi calificación', value: 'sim-next' }]
+  : [{ label: 'Siguiente pregunta ▶', value: 'sim-next' }, { label: 'Terminar aquí', value: 'sim-stop' }];
+
+function askSimQuestion() {
+  if (!sim || busy) return;
+  if (sim.i >= sim.total) return finishSim();
+  sim.q = pickUnused(getPack().questions, askedQuestions);
+  sim.i++; sim.waiting = true;
+  sendState('pregunta', 'reposo', 8000);
+  post({ role: 'bot', tag: `Pregunta ${sim.i} de ${sim.total}`, text: sim.q.q, actions: [{ label: 'No sé, dime la respuesta', value: 'sim-skip' }] });
+}
+
+async function answerSim(text) {
+  if (!sim || !sim.waiting) return;
+  const q = sim.q; sim.waiting = false;
+  const refFiles = q.files.map(r => `\`${r}\``).join(', ');
+  if (!text) {                                             // skipped
+    post({ role: 'bot', text: `La respuesta:\n\n${q.answer}${refFiles ? `\n\nRepasa: ${refFiles}` : ''}`, files: refsIn(q.answer + refFiles), grade: 'incorrecto', actions: simNextActions() });
+    sim.scores.push('incorrecto'); react({ grade: 'incorrecto' });
+    return;
+  }
+  if (!online) {                                           // study mode: self-grading
+    sendState('explicar', 'reposo', 6000);
+    post({ role: 'bot', text: `Compárala con la respuesta de referencia:\n\n${q.answer}${refFiles ? `\n\nRepasa: ${refFiles}` : ''}`, files: refsIn(q.answer + refFiles),
+      actions: [{ label: '✔ Acerté', value: 'simgrade-correcto' }, { label: '≈ Casi', value: 'simgrade-parcial' }, { label: '✘ Fallé', value: 'simgrade-incorrecto' }] });
+    return;
+  }
+  busy = true; sendState('pensar'); loading('Calificando tu respuesta como lo haría el jurado');
+  try {
+    const res = await brain.ask({ workspace: workspace(), message: [
+      'Simulacro de defensa oral del proyecto.',
+      `Pregunta del jurado: "${q.q}"`,
+      `Respuesta de referencia (ya verificada en el proyecto): ${q.answer}`,
+      `Respuesta del estudiante: "${text}"`,
+      'Califícala como un profesor exigente pero justo: qué estuvo bien, qué faltó o estuvo mal, y cómo la diría mejor en 2 o 3 frases. No repitas toda la referencia.',
+      'Termina con una línea exacta: RESULTADO: correcto, RESULTADO: parcial o RESULTADO: incorrecto.',
+    ].join('\n') });
+    if (!sim) return;
+    const g = res.grade || 'parcial';
+    sim.scores.push(g);
+    post({ role: 'bot', ...res, grade: g, actions: simNextActions() });
+    react({ grade: g });
+  } catch (e) {
+    if (!sim) return;
+    post({ role: 'bot', text: `No pude calificarla (${e.message}). Compárala tú con la referencia:\n\n${q.answer}`, files: refsIn(q.answer),
+      actions: [{ label: '✔ Acerté', value: 'simgrade-correcto' }, { label: '≈ Casi', value: 'simgrade-parcial' }, { label: '✘ Fallé', value: 'simgrade-incorrecto' }] });
+  } finally { busy = false; loading(null); }
+}
+
+function recordSim(g) {
+  if (!sim || !SIM_POINTS.hasOwnProperty(g)) return;
+  sim.scores.push(g); react({ grade: g });
+  post({ role: 'bot', grade: g, silent: true, text: { correcto: '¡Bien!', parcial: 'Casi, va bien.', incorrecto: 'Anotada para repasar.' }[g], actions: simNextActions() });
+}
+
+function finishSim() {
+  if (!sim) return;
+  const n = sim.scores.length || 1;
+  const score = Math.round(sim.scores.reduce((s, g) => s + SIM_POINTS[g], 0) / n * 100) / 10;
+  const count = g => sim.scores.filter(x => x === g).length;
+  const verdict = score >= 8 ? '¡Estás listo para la defensa! 🎓' : score >= 6 ? 'Vas bien, pero repasa las que fallaste.' : 'Hay que repasar más; haz el tour otra vez y vuelve a intentarlo. 💪';
+  sendState(score >= 8 ? 'celebrar' : score >= 6 ? 'explicar' : 'ups', 'reposo', 4500);
+  post({ role: 'bot', tag: 'Resultado del simulacro', text: `Calificación: **${score} de 10**\n\n- Correctas: ${count('correcto')}\n- A medias: ${count('parcial')}\n- Incorrectas: ${count('incorrecto')}\n\n${verdict}`,
+    actions: [{ label: 'Otro simulacro', value: 'sim-start' }, { label: 'Tour del proyecto', value: 'tour-start' }] });
+  sim = null;
+}
+
+function endSim(silent = false) {
+  if (!sim) return;
+  if (!silent && sim.scores.length) return finishSim();
+  sim = null;
+}
+
+// ---------- start with Windows ----------
+function setAutostart(on) {
+  settings.autostart = !!on; saveSettings();
+  // unpackaged app: start electron.exe with this app's folder as argument
+  app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath, args: [app.getAppPath()] });
+  if (on) say('Listo, me encenderé cuando prendas la computadora.');
+}
+
 // ---------- guided tour ----------
 let tour = null;           // { intro, flow, steps:[{abs, rel, kind, line, endLine, title, text}], i }
 
@@ -550,6 +667,8 @@ function maybeSurpriseQuiz() {
 }
 
 ipcMain.on('robot-click', () => {
+  shutUp();
+  if (sim) { openPanel({ focus: true }); return; }                         // during the mock defense a click just brings the chat back
   if (bubbleOpen && !busy) { hidePanel(); sendState('reposo'); return; }   // second click closes the chat
   if (busy) { openPanel(); return; }
   sendState('sorpresa');
@@ -631,7 +750,15 @@ ipcMain.on('menu', () => {
     { label: ctx.file ? `Explicar ${path.basename(ctx.file)}` : 'Explicar (abre un archivo en VS Code)', enabled: !!ctx.file && !busy, click: explainCurrent },
     { label: 'Hazme una pregunta de examen', enabled: !busy, click: () => chat(QUIZ_PROMPT) },
     { label: 'Reto: pídeme que te muestre un archivo', enabled: !busy, click: () => chat(FIND_PROMPT) },
+    { label: 'Simulacro de defensa oral', enabled: !busy, click: () => startSim() },
     { label: 'Preguntas sorpresa', type: 'checkbox', checked: settings.quiz, click: i => { settings.quiz = i.checked; saveSettings(); } },
+    { type: 'separator' },
+    { label: 'Hablar en voz alta', type: 'checkbox', checked: settings.speak, click: i => { settings.speak = i.checked; saveSettings(); if (!i.checked) shutUp(); } },
+    { label: 'Voz', submenu: [['Raul', 'Raúl'], ['Sabina', 'Sabina']].map(([v, l]) => ({
+        label: l, type: 'radio', checked: settings.voiceName === v,
+        click: () => { settings.voiceName = v; saveSettings(); say(`Hola, ahora hablo con la voz de ${l}.`); },
+      })) },
+    { label: 'Iniciar con Windows', type: 'checkbox', checked: settings.autostart, click: i => setAutostart(i.checked) },
     { type: 'separator' },
     { label: 'Saludar', click: send('saludar') },
     { label: 'Celebrar', click: send('celebrar') },

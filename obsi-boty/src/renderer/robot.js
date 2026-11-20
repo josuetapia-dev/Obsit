@@ -292,6 +292,9 @@ obsi.onCursor(p => {
   lastCursor = p;
 });
 obsi.onState(s => { poke(); setState(s.name, s.revert, s.ms); });
+// while he speaks, the ring and antenna pulse like a voice meter
+let talking = false;
+if (obsi.onTalking) obsi.onTalking(on => { talking = !!on; poke(); });
 
 // click-through everywhere except over the robot
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -374,10 +377,11 @@ function tick(now = 0) {
   glowNow += (S.glow - glowNow)*(1 - Math.exp(-dt*3));
   ringSpin.rotation.z += spinNow*dt;
   ringPivot.rotation.x = 1.28 + Math.sin(t*(S.carried ? 7 : 0.9))*(S.carried ? 0.18 : 0.05);
-  ringMat.color.setRGB(0.42*glowNow, 0.16*glowNow, 1.15*glowNow);
+  const voice = talking ? 1 + 0.55*Math.abs(Math.sin(t*9) * Math.sin(t*3.7 + 1)) : 1;
+  ringMat.color.setRGB(0.42*glowNow*voice, 0.16*glowNow*voice, 1.15*glowNow*voice);
   ringHaloMat.opacity = 0.12 + glowNow*0.1;
   const pulse = 0.75 + 0.25*Math.sin(t*3);
-  tipMat.color.setRGB(0.85*glowNow, 0.55*glowNow, 1.6*glowNow).multiplyScalar(pulse);
+  tipMat.color.setRGB(0.85*glowNow, 0.55*glowNow, 1.6*glowNow).multiplyScalar(pulse * voice);
   tipHaloMat.opacity = Math.min(1, 0.35 + glowNow*0.3) * pulse;
   auraMat.opacity = Math.min(1, 0.45 + glowNow*0.4);
   rim.intensity = 18 + glowNow*14;

@@ -49,7 +49,7 @@ Si no tienes Claude Code (plan gratuito), Obsi-boty funciona en **modo estudio**
 
 ```powershell
 cd C:\dev\JOPE-AR\obsi-boty
-node src/pack.js C:\dev\gaya\gaya-vainilla
+node src/cerebro/pack.js C:\dev\gaya\gaya-vainilla
 ```
 
 Tarda unos 2 minutos. Luego commit + push, y el equipo hace `git pull`.
@@ -78,7 +78,7 @@ Solo envía la ruta del archivo abierto a `127.0.0.1:47321` (tu propia computado
 ## Cómo está hecho
 
 - `src/main.js` — ventana transparente, servidor local para VS Code, globo de texto, menú.
-- `src/brain.js` — busca Claude Code y le pide la explicación (solo herramientas de lectura: Read, Grep, Glob).
+- `src/cerebro/brain.js` — busca Claude Code y le pide la explicación (solo herramientas de lectura: Read, Grep, Glob).
 - `src/renderer/robot.js` — el robot en 3D (Three.js).
 - `src/renderer/bubble.html` — el globo de texto.
 - Variables opcionales: `OBSI_MODEL` (modelo, por defecto `sonnet`), `OBSI_CLAUDE` (ruta a `claude.exe`).

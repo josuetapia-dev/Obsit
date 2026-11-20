@@ -12,4 +12,7 @@ contextBridge.exposeInMainWorld('bubble', {
   action: value => ipcRenderer.send('chat-action', value),
   reset: () => ipcRenderer.send('chat-reset'),
   openFile: (file, line) => ipcRenderer.send('open-file', { file, line }),
+  onSpeak: cb => ipcRenderer.on('speak', (_e, p) => cb(p)),          // { text, voice }
+  onStopSpeaking: cb => ipcRenderer.on('stop-speaking', () => cb()),
+  speaking: on => ipcRenderer.send('speaking', on),
 });

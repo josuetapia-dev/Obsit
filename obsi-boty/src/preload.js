@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld('obsi', {
   menu: () => ipcRenderer.send('menu'),
   onCursor: cb => ipcRenderer.on('cursor', (_e, p) => cb(p)),
   onState: cb => ipcRenderer.on('state', (_e, s) => cb(s)),   // { name, revert, ms }
+  onTalking: cb => ipcRenderer.on('talking', (_e, on) => cb(on)),
 });

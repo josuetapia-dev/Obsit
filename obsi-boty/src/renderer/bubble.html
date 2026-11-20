@@ -119,12 +119,14 @@ function showLoading(text) {
 function hideLoading() { if (loadingEl) { loadingEl.remove(); loadingEl = null; } $('send').disabled = false; }
 
 function showSuggestions() {
-  addMessage({ role:'bot', kind:'hint', text:'¡Hola! Pregúntame lo que quieras del proyecto, o elige una:', actions: SUGGESTIONS.map(s => ({ label:s, value:'say:' + s })) });
+  addMessage({ role:'bot', kind:'hint', text:'¡Hola! Pregúntame lo que quieras del proyecto, o elige una:',
+    actions: [{ label:'🎤 Simulacro de defensa oral', value:'sim-start' }, ...SUGGESTIONS.map(s => ({ label:s, value:'say:' + s }))] });
 }
 
 function send() {
   const text = input.value.trim();
   if (!text || $('send').disabled) return;
+  speechSynthesis.cancel(); bubble.speaking(false);         // you talk → Obsi-boty stops talking
   input.value = ''; autosize();
   bubble.send(text);
 }
@@ -152,6 +154,44 @@ bubble.onMessage(addMessage);
 bubble.onLoading(t => t ? showLoading(t) : hideLoading());
 bubble.onReset(() => { log.innerHTML = ''; $('title').textContent = 'Obsi-boty'; showSuggestions(); });
 new ResizeObserver(reportHeight).observe($('card'));
+
+// ---------- voice out: Windows voices (offline) through the Web Speech API ----------
+// Text is cleaned for the ear: paths become file names, markdown symbols and emoji are dropped.
+function forSpeech(text) {
+  return String(text)
+    .replace(/`([^`]+)`/g, (_, c) => /[\\/]/.test(c) || /\.\w{1,5}$/.test(c) ? c.split(/[\\/]/).pop().replace(/\.(php|ts|js|md|json|html|scss|blade)$/i, '') : c)
+    .replace(/\*\*|__|[#>*`]/g, '')
+    .replace(/^\s*[-•]\s+/gm, '. ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
+    .replace(/→/g, ', luego, ')
+    .replace(/\s+/g, ' ').trim();
+}
+function pickVoice(name) {
+  const voices = speechSynthesis.getVoices();
+  return voices.find(v => v.name.includes(name) && v.lang.startsWith('es'))
+      || voices.find(v => v.lang === 'es-MX') || voices.find(v => v.lang.startsWith('es')) || null;
+}
+let speakTimer = null, speakGen = 0;
+function speak({ text, voice }) {
+  speechSynthesis.cancel();
+  const gen = ++speakGen;                                  // an interrupted answer must not turn the "talking" glow off
+  const clean = forSpeech(text);
+  if (!clean) return;
+  // long answers are split into sentences so a long one never gets cut off by the engine
+  const parts = clean.match(/[^.!?¿¡]+[.!?]*|[¿¡][^?!]+[?!]/g) || [clean];
+  const v = pickVoice(voice || 'Raul');
+  parts.forEach((p, i) => {
+    const u = new SpeechSynthesisUtterance(p.trim());
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'es-MX';
+    u.rate = 1.05; u.pitch = 1.0;
+    if (i === 0) u.onstart = () => bubble.speaking(true);
+    if (i === parts.length - 1) u.onend = u.onerror = () => { if (gen === speakGen) bubble.speaking(false); };
+    speechSynthesis.speak(u);
+  });
+}
+speechSynthesis.onvoiceschanged = () => {};                  // makes Chromium load the voice list early
+bubble.onSpeak(p => { clearTimeout(speakTimer); speakTimer = setTimeout(() => speak(p), 120); });
+bubble.onStopSpeaking(() => { clearTimeout(speakTimer); speakGen++; speechSynthesis.cancel(); bubble.speaking(false); });
 </script>
 </body>
 </html>

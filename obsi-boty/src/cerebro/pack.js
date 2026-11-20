@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const brain = require('./brain');
 
-const PACKS_DIR = path.join(__dirname, '..', 'paquetes');
+const PACKS_DIR = path.join(__dirname, '..', '..', 'paquetes');
 const packFile = workspace => path.join(PACKS_DIR, `${path.basename(path.resolve(workspace))}.json`);
 
 function load(workspace) {
@@ -118,10 +118,10 @@ const STOP = new Set('muestrame ensename donde esta como funciona archivo archiv
 
 module.exports = { load, generate, search, packFile, PACKS_DIR };
 
-// CLI: node src/pack.js "C:\dev\gaya\gaya-vainilla"
+// CLI: node src/cerebro/pack.js "C:\dev\gaya\gaya-vainilla"
 if (require.main === module) {
   const ws = process.argv[2];
-  if (!ws) { console.error('Uso: node src/pack.js <carpeta del proyecto>'); process.exit(1); }
+  if (!ws) { console.error('Uso: node src/cerebro/pack.js <carpeta del proyecto>'); process.exit(1); }
   brain.initTours(path.join(process.env.APPDATA || require('os').homedir(), 'obsi-boty'));
   const t0 = Date.now();
   generate(ws, m => console.log(`[${Math.round((Date.now() - t0)/1000)}s] ${m}`))
