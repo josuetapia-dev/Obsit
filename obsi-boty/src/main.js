@@ -10,6 +10,10 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const brain = require('./brain');
+const studyPack = require('./pack');
+
+// online = Claude Code is available. Without it (free plan) Obsi-boty runs in "study mode" from the study pack.
+let online = true;
 
 const PORT = 47321;
 const QUIZ_EVERY_MS = 25 * 60 * 1000;       // surprise question at most every 25 min…
@@ -166,7 +170,12 @@ function hidePanel() {
   bubbleOpen = false;
   if (bubble && bubble.isVisible()) bubble.hide();
 }
-const post = m => bubble && bubble.webContents.send('message', m);
+const dbg = s => { if (process.env.OBSI_DEBUG) try { fs.appendFileSync(process.env.OBSI_DEBUG, `· ${s}\n`); } catch { /* debug only */ } };
+const post = m => {
+  // OBSI_DEBUG=<file>: append every chat message to that file (Electron's console isn't visible on Windows)
+  if (process.env.OBSI_DEBUG) try { fs.appendFileSync(process.env.OBSI_DEBUG, `[${m.role}] ${m.tag ? `[${m.tag}] ` : ''}${String(m.text || '').replace(/\s+/g, ' ').slice(0, 170)}${m.actions ? ' | ' + m.actions.map(a => a.label).join(' / ') : ''}\n`); } catch { /* debug only */ }
+  if (bubble) bubble.webContents.send('message', m);
+};
 const loading = t => bubble && bubble.webContents.send('loading', t);
 
 ipcMain.on('bubble-height', (_e, h) => { bubbleHeight = Math.max(80, Math.min(Math.ceil(h), 520)); placeBubble(); });
@@ -182,10 +191,17 @@ ipcMain.on('chat-reset', () => {
 });
 ipcMain.on('open-file', (_e, { file, line }) => openInVSCode(file, line));
 ipcMain.on('chat-send', (_e, text) => chat(text));
-ipcMain.on('chat-action', (_e, value) => {
+ipcMain.on('chat-action', (_e, value) => handleAction(value));
+function handleAction(value) {
   if (value === 'quiz-yes') chat(QUIZ_PROMPT);
   else if (value === 'find-start') chat(FIND_PROMPT);
   else if (value === 'find-hint') chat('Dame una pista para encontrar el archivo del reto, sin decirme su nombre ni su ruta.');
+  else if (value === 'quiz-reveal') offlineReveal(null);
+  else if (value.startsWith('grade-')) {
+    const g = value.slice(6);
+    react({ grade: g });
+    post({ role: 'bot', grade: g, text: { correcto: '¡Bien! 🎉', parcial: 'Casi. Repasa los archivos y la próxima sale. 💪', incorrecto: 'No pasa nada: para eso practicamos. 📚' }[g], actions: [{ label: 'Otra pregunta', value: 'quiz-yes' }] });
+  }
   else if (value === 'find-giveup') giveUpFind();
   else if (value === 'explain-it') explainCurrent();
   else if (value === 'tour-start') startTour();
@@ -195,7 +211,7 @@ ipcMain.on('chat-action', (_e, value) => {
   else if (value === 'tour-end') { tour = null; post({ role: 'bot', kind: 'hint', text: 'Va. Cuando quieras el tour, búscalo en mi menú (clic derecho → Tour del proyecto).' }); sendState('reposo'); }
   else if (value === 'quiz-no') { hidePanel(); sendState('reposo'); }
   else if (value === 'quiz-off') { settings.quiz = false; saveSettings(); post({ role: 'bot', kind: 'hint', text: 'Listo, ya no te haré preguntas sorpresa. Puedes activarlas otra vez desde mi menú (clic derecho).' }); }
-});
+}
 
 // ---------- talking to Claude ----------
 function failMessage(e) {
@@ -216,6 +232,7 @@ async function chat(text) {
   openPanel();
   post({ role: 'user', text });
   if (!workspace()) { post({ role: 'bot', kind: 'hint', text: 'Todavía no sé cuál es tu proyecto. Abre un archivo de él en VS Code y vuelve a preguntarme.' }); return; }
+  if (!online) return offlineChat(text);
   busy = true;
   sendState('pensar');
   loading('Pensando (y revisando el proyecto)');
@@ -232,13 +249,23 @@ async function chat(text) {
       react(res);
     }
   } catch (e) {
+    if (busy && switchToStudyMode(e)) { busy = false; loading(null); return offlineChat(text); }
     if (busy && e.code !== 'CANCELLED') failMessage(e);
   } finally { busy = false; loading(null); }
+}
+
+// Claude Code installed but not usable (no paid plan / not logged in) and there is a study pack → study mode
+function switchToStudyMode(e) {
+  if (e.code !== 'LOGIN' || !getPack()) return false;
+  online = false;
+  post({ role: 'bot', kind: 'hint', text: 'Claude Code no está disponible, así que me cambio a modo estudio (uso el paquete que preparó Josué).' });
+  return true;
 }
 
 async function explainCurrent() {
   if (!ctx.file) { sendState('escuchar', 'reposo', 6000); openPanel({ focus: true }); return; }
   if (busy) return;
+  if (!online) return offlineExplain(ctx.file);
   busy = true;
   const file = ctx.file, name = path.basename(file);
   openPanel();
@@ -252,8 +279,129 @@ async function explainCurrent() {
     post({ role: 'bot', tag: res.cached ? 'guardado · ' + name : name, ...res });
     sendState('explicar', 'reposo', 9000);
   } catch (e) {
+    if (busy && switchToStudyMode(e)) { clearTimeout(thinkTimer); busy = false; loading(null); return offlineExplain(file, { quiet: true }); }
     if (busy && e.code !== 'CANCELLED') failMessage(e);
   } finally { clearTimeout(thinkTimer); busy = false; loading(null); }
+}
+
+// ---------- study mode (no Claude Code: everything comes from the study pack) ----------
+let packCache = { ws: null, data: null };
+function getPack() {
+  const ws = workspace();
+  if (!ws) return null;
+  if (packCache.ws !== ws) packCache = { ws, data: studyPack.load(ws) };
+  return packCache.data;
+}
+const absOf = r => path.join(workspace(), r);
+const relKey = f => path.relative(workspace(), f).replace(/\\/g, '/');
+// `paths` in a pack text → clickable files
+function refsIn(text) {
+  const files = {};
+  for (const m of String(text).matchAll(/`([^`\n]+)`/g)) {
+    const p = m[1].replace(/:\d+(-\d+)?$/, '');
+    try { if (fs.statSync(absOf(p)).isFile()) files[m[1]] = { file: absOf(p), line: null }; } catch { /* not a file */ }
+  }
+  return files;
+}
+const STUDY_ACTIONS = [{ label: 'Tour del proyecto', value: 'tour-start' }, { label: 'Pregunta de examen', value: 'quiz-yes' }, { label: 'Reto: muéstrame', value: 'find-start' }];
+let pendingQuiz = null, findHints = [], findHintIdx = 0;
+const askedQuestions = new Set(), askedChallenges = new Set();
+
+function noPack() {
+  sendState('confundido', 'reposo', 4000);
+  post({ role: 'bot', kind: 'hint', text: `No tengo Claude Code ni paquete de estudio para ${path.basename(workspace())}. Pídele a Josué que lo genere y luego haz "git pull" en la carpeta de Obsi-boty.` });
+}
+const pickUnused = (list, used) => {
+  if (used.size >= list.length) used.clear();
+  const free = list.map((_, i) => i).filter(i => !used.has(i));
+  const i = free[Math.floor(Math.random()*free.length)]; used.add(i); return list[i];
+};
+
+function offlineExplain(file, { quiet = false } = {}) {
+  const p = getPack(); openPanel();
+  if (!quiet) post({ role: 'user', text: `Explícame ${path.basename(file)}` });
+  if (!p) return noPack();
+  const text = p.explanations[relKey(file)];
+  if (text) { post({ role: 'bot', tag: `paquete de estudio · ${path.basename(file)}`, text, files: refsIn(text) }); sendState('explicar', 'reposo', 9000); return; }
+  const some = Object.keys(p.explanations).slice(0, 5).map(r => `- \`${r}\``).join('\n');
+  sendState('confundido', 'reposo', 3000);
+  post({ role: 'bot', text: `Este archivo no está en mi paquete de estudio (tengo los ${Object.keys(p.explanations).length} más importantes). Prueba con alguno de estos:\n${some}`, files: refsIn(some) });
+}
+
+function offlineQuiz() {
+  const p = getPack(); if (!p) return noPack();
+  if (!p.questions.length) return post({ role: 'bot', kind: 'hint', text: 'Mi paquete no trae preguntas.' });
+  pendingQuiz = pickUnused(p.questions, askedQuestions);
+  sendState('pregunta', 'reposo', 8000);
+  post({ role: 'bot', tag: 'Pregunta de examen', text: `${pendingQuiz.q}\n\nEscribe tu respuesta y te muestro la correcta para que te califiques.`,
+    actions: [{ label: 'Ver la respuesta', value: 'quiz-reveal' }] });
+}
+
+function offlineReveal(userAnswer) {
+  const q = pendingQuiz; pendingQuiz = null;
+  if (!q) return;
+  const files = q.files.map(r => `\`${r}\``).join(', ');
+  const text = `${userAnswer ? 'Esta es la respuesta esperada, compárala con la tuya:' : 'La respuesta:'}\n\n${q.answer}${files ? `\n\nRepasa: ${files}` : ''}`;
+  sendState('explicar', 'reposo', 6000);
+  post({ role: 'bot', text, files: refsIn(text), actions: userAnswer
+    ? [{ label: '✔ Acerté', value: 'grade-correcto' }, { label: '≈ Casi', value: 'grade-parcial' }, { label: '✘ Fallé', value: 'grade-incorrecto' }]
+    : [{ label: 'Otra pregunta', value: 'quiz-yes' }] });
+}
+
+function offlineFind() {
+  const p = getPack(); if (!p) return noPack();
+  if (!p.challenges.length) return post({ role: 'bot', kind: 'hint', text: 'Mi paquete no trae retos.' });
+  const c = pickUnused(p.challenges, askedChallenges);
+  startFind(absOf(c.file)); findHints = c.hints || []; findHintIdx = 0;
+  sendState('pregunta', 'reposo', 8000);
+  post({ role: 'bot', tag: 'Reto: muéstrame', text: `${c.prompt}\n\nÁbrelo en VS Code y yo te digo si es ese.`, actions: FIND_ACTIONS });
+}
+
+function offlineHint() {
+  if (!pendingFind) return;
+  const h = findHints[findHintIdx++];
+  post({ role: 'bot', text: h ? `Pista ${findHintIdx}: ${h}` : 'Ya no tengo más pistas. 😅 ¿Te rindes?', actions: FIND_ACTIONS });
+  sendState('explicar', 'reposo', 4000);
+}
+
+function offlineChat(text) {
+  const p = getPack(); if (!p) return noPack();
+  if (text === QUIZ_PROMPT) return offlineQuiz();
+  if (text === FIND_PROMPT) return offlineFind();
+  if (text.startsWith('Dame una pista')) return offlineHint();
+  if (pendingQuiz) return offlineReveal(text);
+  const hits = studyPack.search(p, text);
+  if (!hits.length) {
+    sendState('confundido', 'reposo', 3000);
+    return post({ role: 'bot', text: 'Sin Claude Code no puedo charlar de cualquier cosa, y no encontré nada parecido en mi paquete. 🙈 Pero puedo hacer esto contigo:', actions: STUDY_ACTIONS });
+  }
+  const lines = hits.map(h => `- \`${h.rel}\`: ${String(p.explanations[h.rel]).split(/(?<=\.)\s/)[0]}`).join('\n');
+  const reply = `En modo estudio no charlo libremente, pero en mi paquete encontré esto:\n${lines}`;
+  post({ role: 'bot', text: reply, files: refsIn(reply), actions: STUDY_ACTIONS });
+  sendState('explicar', 'reposo', 6000);
+  if (/mu[eé]strame|ens[eé]ñame|abre|d[oó]nde/i.test(text) && hits[0].score >= 3) openInVSCode(absOf(hits[0].rel));
+}
+
+function tourFromPack() {
+  const p = getPack(); if (!p || !p.tour) return null;
+  const steps = p.tour.steps.map(s => ({ ...s, abs: absOf(s.rel) })).filter(s => fs.existsSync(s.abs));
+  return { intro: p.tour.intro, flow: p.tour.flow, steps };
+}
+
+// generate the study pack (only where Claude Code works)
+async function generatePack() {
+  if (busy || !workspace()) return;
+  busy = true; openPanel();
+  post({ role: 'user', text: 'Genera el paquete de estudio' });
+  sendState('escanear');
+  post({ role: 'bot', kind: 'hint', text: 'Voy a preparar el paquete para tus compañeros: tour, explicaciones, preguntas y retos. Tarda varios minutos; puedes seguir trabajando.' });
+  try {
+    const { pack, file } = await studyPack.generate(workspace(), m => loading(m));
+    packCache = { ws: null, data: null };
+    sendState('celebrar', 'reposo', 4000);
+    post({ role: 'bot', text: `¡Paquete listo! ${Object.keys(pack.explanations).length} explicaciones, ${pack.questions.length} preguntas, ${pack.challenges.length} retos y ${pack.tour.steps.length} paradas.\n\nSe guardó en \`${path.relative(path.join(__dirname, '..', '..'), file).replace(/\\/g, '/')}\`. Haz commit y push para que tu equipo lo tenga con "git pull".` });
+  } catch (e) { failMessage(e); }
+  finally { busy = false; loading(null); }
 }
 
 // ---------- "show me" challenge ----------
@@ -298,6 +446,14 @@ async function startTour({ fresh = false } = {}) {
   openPanel();
   post({ role: 'user', text: fresh ? 'Prepara el tour otra vez' : 'Dame un tour del proyecto' });
   if (!workspace()) { post({ role: 'bot', kind: 'hint', text: 'Primero abre un archivo de tu proyecto en VS Code, así sé cuál recorrer.' }); return; }
+  if (!online) {
+    const t = tourFromPack(); if (!t) return noPack();
+    tour = { ...t, i: -1 };
+    sendState('saludar', 'reposo', 2500);
+    post({ role: 'bot', tag: `Tour · ${t.steps.length} paradas`, text: `${t.intro}\n\nVoy a ir abriendo cada parada en VS Code. Tú me dices cuándo avanzar.`,
+      actions: [{ label: '▶ Empezar', value: 'tour-next' }, { label: 'Más tarde', value: 'tour-end' }] });
+    return;
+  }
   busy = true;
   sendState('escanear');
   loading('Preparando el tour: estoy revisando todo el proyecto (la primera vez tarda 1-2 minutos)');
@@ -417,6 +573,10 @@ function startServer() {
 }
 
 function onEditorEvent(ev) {
+  dbg(`event ${ev.type} file=${ev.file} busy=${busy} online=${online}`);
+  // debug only: simulate typing in the chat or pressing a chat button
+  if (process.env.OBSI_DEBUG && ev.type === 'say') return chat(ev.text);
+  if (process.env.OBSI_DEBUG && ev.type === 'act') return handleAction(ev.value);
   const wasFocused = ctx.focused, prevFile = ctx.file;
   ctx.focused = !!ev.focused;
   if (ev.file !== undefined) {
@@ -461,9 +621,13 @@ ipcMain.on('drag-end', () => {
 ipcMain.on('menu', () => {
   const send = s => () => sendState(s, s === 'dormir' ? null : 'reposo', 2800);
   Menu.buildFromTemplate([
+    ...(online ? [] : [{ label: 'Modo estudio (sin Claude Code)', enabled: false }, { type: 'separator' }]),
     { label: 'Charlar con Obsi-boty', click: () => openPanel({ focus: true }) },
     { label: 'Tour del proyecto', enabled: !busy, click: () => startTour() },
-    { label: 'Rehacer el tour (si el proyecto cambió)', enabled: !busy, click: () => startTour({ fresh: true }) },
+    ...(online ? [
+      { label: 'Rehacer el tour (si el proyecto cambió)', enabled: !busy, click: () => startTour({ fresh: true }) },
+      { label: 'Generar paquete de estudio (para el equipo)', enabled: !busy && !!workspace(), click: generatePack },
+    ] : []),
     { label: ctx.file ? `Explicar ${path.basename(ctx.file)}` : 'Explicar (abre un archivo en VS Code)', enabled: !!ctx.file && !busy, click: explainCurrent },
     { label: 'Hazme una pregunta de examen', enabled: !busy, click: () => chat(QUIZ_PROMPT) },
     { label: 'Reto: pídeme que te muestre un archivo', enabled: !busy, click: () => chat(FIND_PROMPT) },
@@ -488,6 +652,8 @@ ipcMain.on('menu', () => {
 
 app.whenReady().then(() => {
   loadSettings();
+  online = brain.hasClaude();
+  dbg(`start online=${online} claude=${brain.findClaude()}`);
   brain.initCache(app.getPath('userData'));
   brain.initTours(app.getPath('userData'));
   createWindow();

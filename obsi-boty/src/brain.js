@@ -67,8 +67,9 @@ function saveCache() { try { fs.writeFileSync(cacheFile, JSON.stringify(cache));
 let running = null;
 let sessionId = null;          // current conversation
 
-function runClaude(prompt, { cwd, stdin = '', resume = true, keepSession = false, maxTurns = 12, timeout = TIMEOUT_MS }) {
-  if (running) running.kill();
+// exclusive = the interactive call (a new one cancels the previous); the study-pack generator runs several at once
+function runClaude(prompt, { cwd, stdin = '', resume = true, keepSession = false, maxTurns = 12, timeout = TIMEOUT_MS, exclusive = true }) {
+  if (exclusive && running) running.kill();
   const exe = findClaude();
   const args = [
     '-p', prompt,
@@ -83,7 +84,7 @@ function runClaude(prompt, { cwd, stdin = '', resume = true, keepSession = false
 
   return new Promise((resolve, reject) => {
     const child = spawn(exe, args, { cwd, windowsHide: true, shell: exe.endsWith('.cmd') });
-    running = child;
+    if (exclusive) running = child;
     let stdout = '', stderr = '';
     const timer = setTimeout(() => { child.kill(); reject(new Error('Claude tardó demasiado en responder.')); }, timeout);
     child.stdout.on('data', d => stdout += d);
@@ -98,8 +99,9 @@ function runClaude(prompt, { cwd, stdin = '', resume = true, keepSession = false
       catch { return reject(new Error(stderr.trim().slice(0, 200) || 'Claude respondió algo que no entendí.')); }
       if (json.is_error) {
         const msg = String(json.result || json.api_error_status || 'error desconocido');
-        if (/log ?in/i.test(msg)) return reject(Object.assign(new Error('Claude Code no tiene sesión iniciada fuera de la app. Inicia sesión una vez con /login (instrucciones en obsi-boty/README.md).'), { code: 'LOGIN' }));
-        if (resume && sessionId && /session|conversation/i.test(msg)) { sessionId = null; return resolve(runClaude(prompt, { cwd, stdin, resume: false, keepSession, maxTurns, timeout })); }
+        // not logged in, or an account without Claude Code (free plan, no credits) → the caller may switch to study mode
+        if (/log ?in|subscri|plan\b|credit|billing|not available|access/i.test(msg)) return reject(Object.assign(new Error('Claude Code no tiene sesión iniciada fuera de la app. Inicia sesión una vez con /login (instrucciones en obsi-boty/README.md).'), { code: 'LOGIN' }));
+        if (resume && sessionId && /session|conversation/i.test(msg)) { sessionId = null; return resolve(runClaude(prompt, { cwd, stdin, resume: false, keepSession, maxTurns, timeout, exclusive })); }
         return reject(new Error(msg.slice(0, 200)));
       }
       if (json.session_id && !keepSession) sessionId = json.session_id;
@@ -218,4 +220,22 @@ async function makeTourOnce(workspace, { fresh = false } = {}) {
 function cancel() { if (running) { running.kill(); running = null; } }
 function newConversation() { cancel(); sessionId = null; }
 
-module.exports = { ask, explain, makeTour, initTours, cancel, newConversation, findClaude, initCache, samePath };
+// is there a Claude Code we can run? (OBSI_OFFLINE=1 forces study mode, for testing)
+function hasClaude() {
+  if (process.env.OBSI_OFFLINE === '1') return false;
+  const exe = findClaude();
+  return exe !== 'claude' && fs.existsSync(exe);
+}
+
+// for the study-pack generator: a one-off, non-exclusive call that returns parsed JSON (one retry)
+async function askJSON(prompt, cwd, { maxTurns = 40, timeout = 600 * 1000 } = {}) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = await runClaude(prompt, { cwd, resume: false, keepSession: true, maxTurns, timeout, exclusive: false });
+    const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const body = m ? m[1] : raw.slice(Math.min(...['{', '['].map(c => raw.indexOf(c)).filter(i => i >= 0)), Math.max(raw.lastIndexOf('}'), raw.lastIndexOf(']')) + 1);
+    try { return JSON.parse(body); } catch { /* retry once */ }
+  }
+  throw new Error('Claude no devolvió el JSON esperado.');
+}
+
+module.exports = { ask, explain, makeTour, initTours, cancel, newConversation, findClaude, hasClaude, askJSON, initCache, samePath };

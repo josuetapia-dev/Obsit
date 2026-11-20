@@ -1,0 +1,516 @@
+{
+  "project": "gaya-vainilla",
+  "generatedAt": "2026-11-20T00:39:32.334Z",
+  "tour": {
+    "intro": "¡Bienvenido al tour de Gaya Calidad! Vas a seguir el recorrido de un dato, desde que el operador lo captura en la tablet hasta que Dirección lo ve en el tablero. Con estas paradas puedes defender el proyecto.",
+    "flow": "- El operador entra con su número en la app y recibe un token Sanctum → `app/src/app/app.routes.ts` protege las pantallas por perfil\n- Captura un formato (por ejemplo Recepción) en `recepcion.page.ts` → el proveedor lo manda a la API, o lo guarda en el equipo si no hay señal (`sync.service.ts`)\n- `api/routes/api.php` revisa el token y el rol → `RecepcionController` valida con el Form Request\n- `RecepcionService` y `LoteService` asignan lote y folio dentro de una transacción → Eloquent guarda en MySQL\n- Si hubo captura sin conexión, `POST /sincronizacion` la reenvía a las rutas normales → `SincronizacionService`\n- Dirección consulta `/tablero` → `TableroRepository` junta los datos → se ven en la app y en el panel Filament",
+    "steps": [
+      {
+        "rel": "CLAUDE.md",
+        "kind": "file",
+        "line": null,
+        "endLine": null,
+        "title": "Visión general y reglas",
+        "text": "Resume el problema de Gaya Vainilla (registros en papel), el stack (Ionic + Angular, Laravel, MySQL) y los patrones acordados (Repository y Observer). También marca qué es SUPUESTO y no está validado con la empresa. Un profesor puede preguntar por qué esas tecnologías y qué requisitos aún no están confirmados."
+      },
+      {
+        "rel": "docs/arquitectura.md",
+        "kind": "file",
+        "line": 9,
+        "endLine": 55,
+        "title": "Arquitectura y diagrama",
+        "text": "Explica las dos interfaces (app y panel web), que comparten una sola API y una sola base de datos MySQL. Dice que la app nunca toca la base de datos directamente y que Sanctum autentica con token (app) o con sesión (panel). Pregunta probable: ¿por qué un solo backend para todo?"
+      },
+      {
+        "rel": "docs/decisiones",
+        "kind": "folder",
+        "line": null,
+        "endLine": null,
+        "title": "ADRs: por qué se decidió así",
+        "text": "Carpeta con las decisiones técnicas, cada una con contexto, opciones y consecuencias. Cubre los roles y el kiosco (ADR-004), el panel Filament (ADR-006), el Repository del tablero (ADR-012) y el modo sin conexión (ADR-018). Es la fuente para responder los porqués ante el jurado."
+      },
+      {
+        "rel": "app/src/app/app.routes.ts",
+        "kind": "file",
+        "line": 13,
+        "endLine": 40,
+        "title": "App: rutas y guardianes",
+        "text": "Define las pantallas de la app y las carga con `loadComponent`, o sea carga diferida. El guardián `soloPerfil` o `conSesion` bloquea el paso si no hay sesión del perfil correcto (operador o Dirección). Un profesor puede preguntar cómo se protegen las pantallas en la app."
+      },
+      {
+        "rel": "app/src/app/paginas/recepcion/recepcion.page.ts",
+        "kind": "file",
+        "line": 166,
+        "endLine": 188,
+        "title": "App: pantalla de Recepción",
+        "text": "Es el Formato 1: el operador registra la vainilla verde que llega. `guardar()` pide confirmación y llama a `proveedor.registrarRecepcion(datos)`. La página no sabe si habla con la API, con datos demo o con el modo sin conexión; eso lo decide el proveedor inyectado."
+      },
+      {
+        "rel": "app/src/app/core/sin-conexion/sync.service.ts",
+        "kind": "file",
+        "line": 33,
+        "endLine": 58,
+        "title": "App: SyncService y modo sin señal",
+        "text": "Guarda en el equipo lo que se captura sin conexión y lo envía cuando vuelve la red. Expone `conectado$`, un `BehaviorSubject` de RxJS, que es el patrón Observer pedido en el reporte. Pregunta típica: ¿qué pasa si se va el internet a media captura?"
+      },
+      {
+        "rel": "api/routes/api.php",
+        "kind": "file",
+        "line": 35,
+        "endLine": 79,
+        "title": "API: rutas y permisos por rol",
+        "text": "Todas las rutas viven bajo `/api/v1`. `auth:sanctum` exige token y `rol:operador` (o direccion, administrador) restringe por rol mediante el middleware `VerificarRol`. Ahí se ve qué formato corresponde a qué endpoint, por ejemplo `POST /recepciones`."
+      },
+      {
+        "rel": "api/app/Http/Controllers/Api/V1/RecepcionController.php",
+        "kind": "file",
+        "line": 18,
+        "endLine": 28,
+        "title": "API: controlador delgado",
+        "text": "El controlador solo conecta: `RegistrarRecepcionRequest` valida y `RecepcionService` hace el trabajo. Responde 201 con un Resource en JSON. Un profesor puede preguntar por qué la lógica no está en el controlador."
+      },
+      {
+        "rel": "api/app/Services/RecepcionService.php",
+        "kind": "file",
+        "line": 28,
+        "endLine": 60,
+        "title": "API: servicio de negocio",
+        "text": "`registrar()` corre dentro de una transacción de base de datos: asigna el lote por comunidad con `LoteService`, genera el folio R-AA-NNNN y guarda la recepción. La fecha la pone el servidor, no la persona. Aquí se explica la trazabilidad productor → lote."
+      },
+      {
+        "rel": "api/app/Services/SincronizacionService.php",
+        "kind": "file",
+        "line": 77,
+        "endLine": 159,
+        "title": "API: sincronización sin conexión",
+        "text": "Recibe las operaciones capturadas sin señal y reenvía cada una a su ruta normal con su validación. Así no se duplican reglas de negocio. Sirve para explicar el ADR-018 y cómo se evita guardar dos veces lo mismo."
+      },
+      {
+        "rel": "api/database/migrations",
+        "kind": "folder",
+        "line": null,
+        "endLine": null,
+        "title": "Base de datos: migraciones",
+        "text": "Carpeta con las tablas de MySQL, como `lotes`, recepciones, hornadas y cierres de etapa. Se complementa con `docs/base-de-datos.md`, que trae el diagrama entidad-relación. Pregunta probable: ¿cómo se relacionan productor, lote y etapas?"
+      },
+      {
+        "rel": "api/app/Repositories/TableroRepository.php",
+        "kind": "file",
+        "line": 16,
+        "endLine": 45,
+        "title": "Patrón Repository: tablero",
+        "text": "Es el contrato (interfaz) de las consultas del tablero de Dirección. `AppServiceProvider` lo enlaza con `EloquentTableroRepository`, que trae las consultas reales. Así el controlador no depende de la base de datos. Es el patrón Repository del reporte (ADR-012)."
+      },
+      {
+        "rel": "api/app/Providers/Filament/AdminPanelProvider.php",
+        "kind": "file",
+        "line": 56,
+        "endLine": null,
+        "title": "Panel web con Filament",
+        "text": "Configura el panel de administración en `/admin`, dentro del mismo proyecto Laravel. Se usa para gestionar empleados y revisar alertas de seguridad. Un profesor puede preguntar por qué se eligió Filament en lugar de Blade (ADR-006)."
+      }
+    ]
+  },
+  "explanations": {
+    "CLAUDE.md": "Es la guía de contexto que Claude Code lee en cada sesión: qué es el proyecto, cómo trabajar y qué documentar.\n- Describe el proyecto integrador con Gaya Vainilla (área de Calidad e Inocuidad), el equipo Scrum y las restricciones de la escuela (APK real, entrega en diciembre de 2026).\n- Fija el stack: Ionic + Angular + Capacitor, Laravel + Sanctum, MySQL, PHPUnit y Vitest.\n- Exige documentar todo (bitácora, ADRs, guías por módulo) y marcar como `SUPUESTO` lo no validado.\n- Prohíbe hacer commits, push o cambiar de rama; solo se sugiere el mensaje.\nPor qué: la regla de documentar viene de que Josué quiere entender su código al terminar, según la sección 5 del propio archivo.",
+    "docs/arquitectura.md": "Documento vivo que explica las piezas del sistema y cómo se comunican.\n- Hay dos interfaces, la app móvil (kiosco táctil) y el panel web, que comparten una sola API Laravel y una base MySQL.\n- Las capas de Laravel son ruta, middleware, Form Request, controlador, servicio, repositorio y modelo, con eventos como Observer.\n- En la app, `SyncService` usa un `BehaviorSubject` para el estado de la conexión, y las páginas no saben si los datos vienen de la API o del modo demo.\n- Incluye el flujo de captura sin señal.\nPor qué: las tecnologías se justifican en `docs/decisiones/ADR-001-stack-tecnologico.md`, y el modo sin conexión en `docs/decisiones/ADR-018-modo-sin-conexion.md`.",
+    "app/src/app/app.routes.ts": "Define las rutas (pantallas) de la app de la pantalla táctil y quién puede entrar a cada una.\n- Cada página usa `loadComponent`, así su código solo se descarga al visitarla (carga diferida).\n- Los guardianes `soloPerfil('operador')` y `soloPerfil('direccion')` regresan al inicio si no hay sesión con ese perfil; `conSesion()` protege `pendientes`.\n- Los 7 formatos tienen ruta propia bajo `modulos/...`, y deben ir antes de la genérica `modulos/:clave`, que ya está por retirarse.\n- `**` redirige al inicio.\nPor qué: los perfiles y roles salen de `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md`.",
+    "app/src/app/paginas/recepcion/recepcion.page.ts": "Es la pantalla del Formato 1, \"Recepción de vainas de vainilla\", en `/modulos/recepcion`.\n- Funciona en tres pasos: elegir comunidad, elegir productor y llenar la entrega con su inspección.\n- Usa signals de Angular para el estado, `validarRecepcion` antes de mandar y `PROVEEDOR_BENEFICIO` (API o demo) para el catálogo y para guardar.\n- Muestra un aviso de lluvia de los últimos 3 días por comunidad.\n- Si hay moho, no deja marcar la entrega como aceptada. Al guardar pide confirmación porque el registro ya no se edita, recarga los lotes y regresa al menú.\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md` explica que el servidor decide el lote por la comunidad.",
+    "app/src/app/core/sin-conexion/sync.service.ts": "Servicio que vigila la conexión y envía al servidor lo capturado sin señal.\n- `conectado$` es un `BehaviorSubject<boolean>` (patrón Observer) que se actualiza con `@capacitor/network` o cuando una petición no llega.\n- Maneja la bandeja de operaciones pendientes y rechazadas. Las rechazadas se conservan hasta que alguien las descarte.\n- `sincronizar()` manda todo junto a `POST /sincronizacion` con el token del equipo, al volver la red y cada 30 segundos. Cuando la bandeja queda vacía emite `sincronizado$`.\nPor qué: `docs/decisiones/ADR-018-modo-sin-conexion.md` define el token del equipo y el envío por lotes.",
+    "api/routes/api.php": "Archivo que registra todas las rutas de la API REST, bajo el prefijo `/api/v1`.\n- Las rutas de acceso (`/acceso/...`) y `/clima/planta` no llevan token, porque sirven justo para obtenerlo o se ven antes de entrar.\n- Todo lo demás va dentro de `auth:sanctum` y se limita por rol con `rol:operador`, `rol:direccion,administrador` o `rol:dispositivo`.\n- Agrupa los 7 formatos del beneficiado, el tablero, el reporte en Excel, el clima y `POST /sincronizacion`.\n- Los lotes se buscan por código con `{lote:codigo}`.\nPor qué: los roles vienen de `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md`, y el rol `dispositivo` de `docs/decisiones/ADR-018-modo-sin-conexion.md`.",
+    "api/app/Http/Controllers/Api/V1/RecepcionController.php": "Controlador de `POST /api/v1/recepciones`: recibe el formato 1 (recepción de vainas) desde la pantalla táctil.\n- Solo conecta: `RegistrarRecepcionRequest` valida (incluida la regla del moho) y `RecepcionService` guarda.\n- Pasa el usuario autenticado y el origen fijo 'movil'.\n- Responde 201 con `RecepcionResource` (recepción, lote, comunidad, productor y registrador) para mostrar \"Quedó en el lote X\".\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md` (lotes y formato de recepción).",
+    "api/app/Services/RecepcionService.php": "Servicio que registra la recepción de vainas, el formato 1.\n- En una transacción busca el productor y pide a `LoteService` el lote abierto de su comunidad.\n- Genera el folio consecutivo por año (R-26-0001) con `lockForUpdate` para evitar repetidos.\n- La fecha la pone el servidor (`now()`); guarda quién registró y el origen.\n- El formato del folio es un SUPUESTO: Gaya podría usar folios impresos.\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md`.",
+    "api/app/Services/SincronizacionService.php": "Aplica las capturas que un equipo hizo sin conexión, al volver la señal.\n- Reenvía cada operación, dentro del mismo proceso, a la ruta normal (tabla `TIPOS`), a nombre del empleado y con el reloj en la hora de captura. Así no se duplican reglas ni permisos.\n- Es idempotente: guarda cada operación en `operaciones_sin_conexion` por uuid y no repite las ya vistas.\n- Rechaza empleados desconocidos, relojes adelantados y capturas de más de 7 días (SUPUESTO).\n- Si hay un error 5xx se detiene y deja el resto 'pendiente'.\nPor qué: `docs/decisiones/ADR-018-modo-sin-conexion.md`.",
+    "api/app/Repositories/TableroRepository.php": "Interfaz (contrato) del patrón Repository para las cifras del tablero de Dirección.\n- Define tres consultas: `resumen` (indicadores, lotes por paso, productividad), `preparaciones` (para el Excel) y `actividad` (lo que hizo una persona).\n- El controlador solo conoce este contrato, no cómo se consulta.\n- Hoy lo cumple `EloquentTableroRepository`; el enlace está en `AppServiceProvider`.\nPor qué: `docs/decisiones/ADR-012-tablero-direccion-y-repository.md`; el Excel en `docs/decisiones/ADR-015-exportacion-excel.md`.",
+    "api/app/Providers/Filament/AdminPanelProvider.php": "Configura el panel web del Administrador con Filament, en `/admin`.\n- Define la ruta, el login con correo y contraseña (sesión de Laravel) y los middlewares de sesión, cookies y CSRF.\n- Pone la marca 'Gaya Calidad' (logo G) y la paleta petróleo.\n- Descubre automáticamente Resources, páginas y widgets en `app/Filament`.\n- Quién entra se decide en `User::canAccessPanel()`, no aquí.\nPor qué: `docs/decisiones/ADR-006-panel-web-filament.md`; colores en `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md`.",
+    "api/bootstrap/app.php": "Archivo de arranque de Laravel: configura la aplicación.\n- Registra las rutas: web, api, comandos de consola y la ruta de salud `/up`.\n- Crea el alias de middleware `rol` que apunta a `App\\Http\\Middleware\\VerificarRol`, para proteger rutas con `->middleware('rol:administrador')`.\n- El bloque de excepciones está vacío (usa el manejo por defecto).\nPor qué: no encontré un ADR específico de este archivo; los roles se explican en `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md`.",
+    "api/config/gaya.php": "Configuración propia de Gaya Calidad: valores ajustables que se leen del .env.\n- `acceso`: máximo de intentos fallidos (5), segundos de bloqueo (60) y minutos que se recuerdan los fallos (SUPUESTO).\n- `clima`: coordenadas de Gutiérrez Zamora, caché de 30 min y umbrales de lluvia para avisar en recepción.\n- `cuentas_iniciales`: datos del administrador y de Dirección que usa `CuentasInicialesSeeder`.\n- El código usa config('gaya...') y no env(), porque con config:cache env() deja de leer el .env.\nPor qué: `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md` (acceso) y `docs/decisiones/ADR-016-clima-open-meteo.md` (clima).",
+    "api/config/sanctum.php": "Configuración de Laravel Sanctum, que emite los tokens de la API.\n- Es casi el archivo por defecto, con comentarios originales de Laravel.\n- Lo propio: `expiration` es 720 minutos (12 h) por defecto, un SUPUESTO para los tokens de la pantalla táctil.\n- El cierre por inactividad lo hace la app, no el token.\n- `stateful` y `guard` quedan estándar, para sesión web del panel.\nPor qué: `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md`, citado en el propio archivo.",
+    "api/app/Http/Middleware/VerificarRol.php": "Middleware que deja pasar la petición solo si el usuario tiene un rol permitido y está activo.\n- Se usa con el alias `rol`, p. ej. `rol:direccion,administrador`, siempre después de `auth:sanctum`.\n- Toma el usuario de la petición y consulta `tieneRol(...$roles)`.\n- Si no cumple, responde 403 en JSON con \"No tienes permiso para esta acción.\".\n- El alias se registra en `api/bootstrap/app.php`.\nPor qué: los roles se definen en `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md` (no lo cita el archivo; es lo más cercano).",
+    "api/app/Http/Controllers/Api/V1/AccesoController.php": "Controlador de entrada y salida de la pantalla táctil.\n- `verificarNumero()`: revisa si el número de empleado existe, sin pedir PIN ni devolver el nombre.\n- `operador()`: número + PIN (`Hash::check`) y entrega un token de Sanctum.\n- `direccion()`: acceso con la contraseña de Dirección.\n- `salir()`: borra el token actual.\n- Cada fallo pasa por `ControlDeIntentos`: 5 fallos seguidos devuelven 429 con Retry-After.\nPor qué: `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md` y la bitácora 013 (mensajes \"no registrado\").",
+    "api/app/Http/Controllers/Api/V1/LoteController.php": "Controlador de GET /api/v1/lotes: lista los lotes en proceso.\n- Filtra por `estado = en_proceso` y ordena del más reciente al más antiguo.\n- Carga `comunidad`, `origenes` e `inventarioVerde`, y cuenta las recepciones.\n- Suma `kg_aceptados`: solo recepciones con resultado `aceptada`; lo rechazado queda como evidencia.\n- Devuelve `LoteResource::collection`.\n- Lo usan el menú, el selector de lotes y la pantalla del inventario verde.\nPor qué: `docs/decisiones/ADR-008-cierre-recepcion-e-inventario-verde.md` (aceptado vs. rechazado).",
+    "api/app/Http/Controllers/Api/V1/SincronizacionController.php": "Controlador de POST /api/v1/sincronizacion: recibe lo capturado sin conexión.\n- Es un controlador invocable (`__invoke`) y solo conecta; la lógica está en `SincronizacionService`.\n- Valida con `SincronizarRequest` y pasa usuario y operaciones al servicio.\n- Responde, en el mismo orden, cada operación como `aplicada`, `rechazada` (con motivo) o `pendiente` (el equipo reintenta).\n- Solo el rol `dispositivo`, con token creado por `php artisan gaya:dispositivo`.\nPor qué: `docs/decisiones/ADR-018-modo-sin-conexion.md`.",
+    "api/app/Http/Controllers/Api/V1/TableroController.php": "Controlador que entrega las cifras del tablero de Dirección.\n- `__invoke` valida el periodo (hoy, semana o mes), lo convierte en fechas con `App\\Support\\Periodo` y responde JSON con el resumen.\n- `persona` devuelve lo que hizo un empleado en el periodo y da 404 si el número no existe.\n- No consulta la base: pide los datos a `TableroRepository`.\n- Lo ven Dirección y Administrador, no el operador.\nPor qué: `docs/decisiones/ADR-012-tablero-direccion-y-repository.md` (tablero y patrón Repository).",
+    "api/app/Http/Controllers/Api/V1/ReporteController.php": "Controlador que descarga el reporte en Excel del periodo elegido.\n- Valida el periodo y calcula las fechas con `Periodo`, igual que el tablero.\n- Crea un archivo temporal y le pide a `ReporteExcelService` que lo escriba.\n- Lo envía como descarga `.xlsx` y lo borra al terminar (`deleteFileAfterSend`).\n- Es para Dirección y Administrador.\nPor qué: `docs/decisiones/ADR-015-exportacion-excel.md`.",
+    "api/app/Services/ControlDeIntentos.php": "Servicio que cuenta los accesos fallidos y bloquea el equipo al llegar al límite.\n- Cuenta por IP, sin importar el número de empleado usado, porque quien prueba datos ajenos va cambiando de número.\n- Al llegar a 5 fallos bloquea 1 minuto y crea una `AlertaSeguridad` con los números probados.\n- Un acceso correcto borra la cuenta de fallos.\n- Guarda los conteos en la caché de Laravel. Lo usa `AccesoController`.\nPor qué: `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md`, que el código cita como ADR-004.",
+    "api/app/Services/LoteService.php": "Servicio con las reglas de los lotes.\n- `loteParaRecepcion` suma la entrega al lote abierto de la comunidad o abre uno nuevo, con bloqueo para evitar choques.\n- Forma el código con siglas y fecha juliana (ej. PAL-26304) y agrega una letra si ya existe.\n- `avanzarA` solo permite avanzar de paso, y `terminar` marca el lote como terminado.\n- `juntarEnDespezonado` une lotes verdes en uno nuevo y asigna color.\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md`, `docs/decisiones/ADR-009-lotes-que-se-juntan-despezonado.md` y `docs/decisiones/ADR-014-color-por-lote.md`.",
+    "api/app/Services/SudadoService.php": "Servicio del formato 5, cajón de sudado.\n- `sacar` abre el renglón del día cuando el lote sale al patio. Exige un solo registro por día y que no haya otro abierto.\n- `entrar` lo cierra una sola vez, con temperatura, lugar (cajón o espiguero) y camilla.\n- `resumen` calcula el día de sudado y cuenta soles y sudores, sin capturarlos.\n- Usa transacciones con bloqueo y la fecha la pone el servidor.\nPor qué: `docs/decisiones/ADR-011-formatos-5-a-7-registros-diarios.md` y `docs/decisiones/ADR-017-lugares-y-dos-momentos-sudado-secado.md`.",
+    "api/app/Services/SecadoService.php": "Servicio del formato 6, secado en espigueros y camillas.\n- `registrar` abre el renglón del día. Si sale al patio queda abierto y, si no sale, se guarda completo.\n- `regresar` cierra el registro cuando vuelve del patio, una sola vez.\n- `resumen` calcula el día, los días sin sol, el reposo del enmuertado (30 días, un `SUPUESTO`) y los soles y sudores acumulados, sumando los de `SudadoService`.\nPor qué: `docs/decisiones/ADR-011-formatos-5-a-7-registros-diarios.md` y `docs/decisiones/ADR-017-lugares-y-dos-momentos-sudado-secado.md` (secado en dos momentos).",
+    "api/app/Models/Lote.php": "Modelo Eloquent del lote de vainilla, la pieza central de la trazabilidad.\n- Hay dos tipos: `verde` (uno por comunidad, pasos 1 a 3) y `despezonado` (nace al juntar lotes verdes, desde el paso 4).\n- Define constantes de los pasos (recepción, inventario, despezonado, hornos, sudado, secado, bancos) y la paleta de 12 colores aptos para daltonismo.\n- Relaciones: comunidad, recepciones, `origenes` y `destinos` (tabla `lote_composicion`), hornadas, registros de sudado y secado, actividades de banco y cierres de etapa.\n- Solo `LoteService` debería crearlo y moverlo de paso.\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md`, `docs/decisiones/ADR-009-lotes-que-se-juntan-despezonado.md` y `docs/decisiones/ADR-014-color-por-lote.md`.",
+    "api/app/Models/Concerns/EsInmutable.php": "Rasgo (trait) que vuelve inmodificable un registro ya guardado.\n- Engancha los eventos `updating` y `deleting` del modelo y lanza `RegistroInmutable`.\n- Al estar en el modelo y no solo en la API, ni el panel, ni la consola, ni un error pueden alterar evidencia de auditoría.\n- Laravel ejecuta `bootEsInmutable()` solo, por la convención boot + nombre del rasgo.\n- Lo usa `Recepcion` y los demás formatos.\nPor qué: es la regla de la dirección de Gaya, \"se corrige antes de guardar, no después\", en `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md` y `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md`.",
+    "api/app/Models/User.php": "Modelo del usuario del sistema (administrador, Dirección, operador y dispositivo), usado por la autenticación y Sanctum.\n- `HasApiTokens` da tokens a la pantalla táctil, que entra con número de empleado y PIN.\n- `password` y `pin` se guardan con hash (cast `hashed`) y están en `$hidden`, así que nunca salen en un JSON.\n- `canAccessPanel()` deja entrar al panel Filament solo al administrador activo.\n- `tieneRol(...)` consulta el rol, y la relación `rol()` apunta al modelo `Rol`.\nPor qué: `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md` (roles) y `docs/decisiones/ADR-006-panel-web-filament.md` (acceso al panel).",
+    "api/database/migrations/2026_10_31_000003_create_lotes_table.php": "Migración que crea la tabla `lotes`, el eje de la trazabilidad.\n- Campos: `codigo` único (SIGLAS-AADDD, marcado SUPUESTO), `comunidad_id`, `fecha_inicio`, `paso_actual` (1 = recepción) y `estado` (en_proceso, terminado o rechazado).\n- `creado_por` y `comunidad_id` usan `restrictOnDelete`, para no borrar datos con historial.\n- Tiene un índice `(comunidad_id, paso_actual, estado)` para encontrar rápido el lote que sigue en recepción.\n- `tipo` y `color` se agregaron en migraciones posteriores.\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md`.",
+    "api/database/migrations/2026_10_31_000004_create_recepciones_table.php": "Migración de la tabla `recepciones`, que guarda el formato 1 B-F-01 \"Recepción de vainas de vainilla\".\n- Una fila por entrega, con folio único R-AA-NNNN (SUPUESTO), lote, productor, tipo de vaina, `cantidad_kg` y los datos de inspección (moho, rajada, materia extraña, resultado).\n- Guarda quién registró (`registrado_por`) y desde dónde (`origen`: móvil o web).\n- Lleva `codigo_formato` y `revision_formato` (B-F-01, REV-05) como control documental.\n- Lo guardado no se edita, por el rasgo `EsInmutable`; ver `api/app/Models/Concerns/EsInmutable.php`.\nPor qué: `docs/decisiones/ADR-007-lotes-y-formato-recepcion.md`.",
+    "api/database/migrations/2026_11_19_000002_create_operaciones_sin_conexion_table.php": "Migración de `operaciones_sin_conexion`, que registra cada captura hecha sin señal y enviada después.\n- El `uuid` único lo genera el equipo, así que un reenvío no se guarda dos veces.\n- Sirve de auditoría: dispositivo, empleado, `capturado_at` frente a `recibido_at`, y `estado` (aplicada o rechazada).\n- Guarda `registro_id`, `lote_codigo` y `mensajes` (JSON) con el motivo del rechazo.\n- Se relaciona con `users` mediante el dispositivo y, opcionalmente, el empleado.\nPor qué: `docs/decisiones/ADR-018-modo-sin-conexion.md`.",
+    "app/src/app/core/api.interceptor.ts": "Interceptor HTTP de Angular que prepara cada petición a la API de Laravel.\n- Solo actúa si la URL empieza con `environment.apiUrl`. Las peticiones a otros servidores no se tocan, para no filtrar el token.\n- Agrega `Accept: application/json`. Sin él, Laravel responde los errores de validación con una redirección en vez de JSON.\n- Agrega `Authorization: Bearer <token>` con el token de `TokenService`, salvo que la petición ya traiga uno.\n- Se registra en `main.ts` con `withInterceptors`.\nPor qué: `docs/bitacora/009-conexion-kiosco-api.md` explica el interceptor y la conexión del kiosco con la API.",
+    "app/src/app/core/sesion.service.ts": "Servicio que guarda quién está usando la pantalla táctil y cierra su sesión por inactividad.\n- Guarda el usuario (operador o Dirección) en una signal privada, expuesta solo de lectura. También publica `activa`, calculada a partir de ella.\n- No valida el acceso él mismo: se lo pide a `PROVEEDOR_ACCESO`, que es la API o datos de ejemplo según `environment.usarApi`. Por eso `iniciarOperador` e `iniciarDireccion` son asíncronas.\n- Un temporizador de 3 minutos (`MINUTOS_INACTIVIDAD`, un SUPUESTO) cierra la sesión sola. Cada toque lo reinicia con `registrarActividad`.\n- No valida nada mientras `SeguridadService` tenga la pantalla bloqueada por intentos fallidos.\nPor qué: `docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md` (tiempo de inactividad) y `docs/decisiones/ADR-005-conexion-kiosco-api.md` (proveedor de acceso).",
+    "app/src/app/core/proveedor-beneficio-sin-conexion.ts": "Proveedor de los formatos del beneficiado que sigue funcionando sin red. Envuelve a `ProveedorBeneficioApi` como un Decorator.\n- Con conexión y sin pendientes, manda todo a la API y guarda en el equipo una copia de cada lista. Esas copias se refrescan cada 10 minutos.\n- Sin conexión, o con capturas por enviar, trabaja sobre un motor en memoria (`ProveedorBeneficioDemo`) y guarda cada captura en la bandeja de `SyncService`.\n- Los lotes y renglones creados sin red llevan una referencia `{operacion: uuid}`, que la API cambia por el código o id real al sincronizar.\n- Se suscribe a `sincronizado$` (Observer): al vaciarse la bandeja descarta el motor y vuelve a leer de la API.\nPor qué: `docs/decisiones/ADR-018-modo-sin-conexion.md`, con detalle en `docs/bitacora/045-modo-sin-conexion-app.md`."
+  },
+  "questions": [
+    {
+      "q": "¿Qué hace `ControlDeIntentos` y por qué cuenta los fallos por equipo (IP) y no por número de empleado?",
+      "answer": "Cuenta los intentos fallidos de acceso y, al llegar a 5 seguidos, bloquea el equipo 1 minuto y crea una `AlertaSeguridad` con los números usados. Cuenta por IP con cualquier número porque quien prueba datos ajenos cambia de número en cada intento. Un acceso correcto reinicia la cuenta. Los conteos viven en la caché de Laravel.",
+      "files": [
+        "api/app/Services/ControlDeIntentos.php",
+        "docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md",
+        "api/config/gaya.php"
+      ]
+    },
+    {
+      "q": "¿Por qué el operador entra con número de empleado + PIN de 4 dígitos y no solo con PIN o con nombre y contraseña?",
+      "answer": "Con teclado en pantalla, escribir nombre y contraseña es lento y propenso a errores. Solo PIN obligaría a que fuera único y alguien podría adivinar el de otro. El número lo genera el sistema y es único, así que el PIN no necesita serlo. Como 4 dígitos son pocas combinaciones, hay que limitar los intentos fallidos (bloqueo tras 5).",
+      "files": [
+        "docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md",
+        "api/app/Http/Controllers/Api/V1/AccesoController.php"
+      ]
+    },
+    {
+      "q": "¿Cómo se guarda el PIN de un empleado y cuándo se le muestra?",
+      "answer": "El sistema genera el PIN al azar con el botón \"Crear PIN\", evitando los obvios (0000, 1234, 1111). Se muestra una sola vez para entregárselo al empleado y en la base se guarda cifrado (hash). Al entrar, el servidor lo valida con `Hash::check`. Si se olvida, se usa \"Regenerar PIN\".",
+      "files": [
+        "docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md",
+        "api/app/Http/Controllers/Api/V1/AccesoController.php",
+        "api/app/Services/EmpleadoService.php"
+      ]
+    },
+    {
+      "q": "¿Dónde guarda la app el token de Sanctum y por qué se decidió así?",
+      "answer": "Solo en memoria, en `TokenService`. La pantalla es compartida: si el token estuviera en `localStorage`, la siguiente persona podría quedar dentro de la sesión de la anterior. Si la app se recarga, hay que identificarse de nuevo, lo cual en un kiosco es una ventaja. Al salir, la app también avisa a la API con `POST /acceso/salir` para invalidarlo.",
+      "files": [
+        "app/src/app/core/token.service.ts",
+        "docs/decisiones/ADR-005-conexion-kiosco-api.md"
+      ]
+    },
+    {
+      "q": "¿Qué hace el middleware `VerificarRol` y qué responde cuando un operador intenta usar un endpoint de Dirección, como `GET /api/v1/tablero`?",
+      "answer": "Deja pasar la petición solo si el usuario está activo y tiene uno de los roles indicados (por ejemplo `rol:direccion,administrador`), siempre después de `auth:sanctum`. Si no, responde 403 en JSON con \"No tienes permiso para esta acción.\". El operador recibe ese 403 en el tablero.",
+      "files": [
+        "api/app/Http/Middleware/VerificarRol.php",
+        "api/routes/api.php",
+        "docs/decisiones/ADR-012-tablero-direccion-y-repository.md"
+      ]
+    },
+    {
+      "q": "¿Qué roles tiene el sistema y por qué se reemplazaron los del modelo inicial (administrador, jefe_calidad, inspector)?",
+      "answer": "Ahora son `administrador` (da de alta y baja al personal, consulta), `direccion` (solo consulta gráficas, avances y reportes) y `operador` (llena los 7 formatos en la pantalla táctil). Los iniciales ya no describían cómo trabaja Gaya tras la junta: la app es un kiosco compartido, no el celular de cada inspector. Cada nombre dice lo que hace el rol. Después se agregó el rol técnico `dispositivo` para la sincronización.",
+      "files": [
+        "docs/decisiones/ADR-004-interfaz-kiosco-y-roles.md",
+        "api/app/Models/Rol.php"
+      ]
+    },
+    {
+      "q": "¿Cómo se aplica el patrón Repository en el tablero de Dirección y dónde se conecta el contrato con su implementación?",
+      "answer": "El contrato `TableroRepository` define `resumen($desde, $hasta)` y `EloquentTableroRepository` lo implementa con Eloquent y `DB::table`. `AppServiceProvider` los une con `$this->app->bind(...)`, y `TableroController` pide el contrato, sin saber cómo se consulta. Así se podría cambiar la fuente (una tabla resumen) sin tocar el controlador. Es el patrón que se comprometió con la escuela en el Reporte.",
+      "files": [
+        "api/app/Repositories/TableroRepository.php",
+        "api/app/Repositories/EloquentTableroRepository.php",
+        "api/app/Providers/AppServiceProvider.php",
+        "docs/decisiones/ADR-012-tablero-direccion-y-repository.md"
+      ]
+    },
+    {
+      "q": "¿Por qué las consultas de reportes no se pusieron en un servicio como `LoteService` y sí en un Repository?",
+      "answer": "Los servicios del proyecto cambian datos (registrar, avanzar de paso); mezclar ahí las lecturas de reportes confunde responsabilidades. El Repository separa las lecturas, cumple lo prometido a la escuela y evita que el controlador crezca. Además, el Excel reutiliza el mismo repositorio, por lo que tablero y reporte siempre coinciden.",
+      "files": [
+        "docs/decisiones/ADR-012-tablero-direccion-y-repository.md",
+        "docs/decisiones/ADR-015-exportacion-excel.md"
+      ]
+    },
+    {
+      "q": "¿Qué patrón Observer se usa en la app móvil y qué avisa exactamente?",
+      "answer": "`SyncService` publica el estado de la conexión en un `BehaviorSubject<boolean>` (`conectado$`), alimentado por `@capacitor/network` y por los fallos de red. También emite `sincronizado$` cuando ya se envió todo lo pendiente, para que `LotesService` y el proveedor vuelvan a pedir datos a la API. Es el Observer prometido en el Reporte.",
+      "files": [
+        "app/src/app/core/sin-conexion/sync.service.ts",
+        "docs/modulos/sincronizacion.md",
+        "docs/decisiones/ADR-018-modo-sin-conexion.md"
+      ]
+    },
+    {
+      "q": "¿Dónde se guardan en el equipo los datos del modo sin conexión y por qué se eligió esa opción?",
+      "answer": "En IndexedDB con la librería `idb`. `localStorage` guarda solo texto, ~5 MB y bloquea la pantalla; SQLite exige un plugin nativo que no funciona igual en el navegador de la TV ni en las pruebas. IndexedDB guarda objetos y funciona igual en el APK, el navegador y las pruebas. Se guardan copias de lo último que respondió la API y una bandeja de salida con las operaciones pendientes.",
+      "files": [
+        "docs/decisiones/ADR-018-modo-sin-conexion.md",
+        "app/src/app/core/sin-conexion/almacen.ts"
+      ]
+    },
+    {
+      "q": "Sigue el flujo de una captura hecha sin conexión: desde que el operador guarda hasta que queda en MySQL.",
+      "answer": "`ProveedorBeneficioSinConexion` detecta que no hay red, aplica la captura al motor local con las reglas de la demo y la guarda en la bandeja de IndexedDB (uuid, tipo, datos, empleado, `capturado_at`). Al volver la red, `SyncService` envía la bandeja a `POST /api/v1/sincronizacion` con el token del equipo. `SincronizacionService` reenvía cada operación a la ruta normal, a nombre del empleado y con el reloj en la hora de captura, y registra el resultado en `operaciones_sin_conexion`.",
+      "files": [
+        "app/src/app/core/proveedor-beneficio-sin-conexion.ts",
+        "app/src/app/core/sin-conexion/sync.service.ts",
+        "api/app/Services/SincronizacionService.php",
+        "docs/modulos/sincronizacion.md"
+      ]
+    },
+    {
+      "q": "¿Por qué la sincronización usa el token del equipo (rol `dispositivo`) y no el token de cada empleado?",
+      "answer": "Si Ana captura a las 10:00 y la red vuelve a las 15:00 con Luis en la pantalla, el envío no puede ir con el token de Luis, y el de Ana (12 horas de vida) pudo vencer; además quien entró sin conexión no tiene token. El equipo envía a nombre de quien capturó. La desventaja es que la API confía en el equipo para decir quién capturó; se mitiga con el PIN local y la tabla de auditoría. El token se crea con `php artisan gaya:dispositivo`.",
+      "files": [
+        "docs/decisiones/ADR-018-modo-sin-conexion.md",
+        "api/app/Console/Commands/CrearDispositivo.php",
+        "api/routes/api.php"
+      ]
+    },
+    {
+      "q": "¿Qué pasa si el equipo reenvía una operación que el servidor ya había recibido (por ejemplo, se cortó la red tras guardarla)?",
+      "answer": "No se duplica. Cada operación lleva un `uuid`; `SincronizacionService::procesar` busca primero en `operaciones_sin_conexion` y, si ya existe, responde el mismo resultado sin aplicarla otra vez. Es idempotencia por uuid.",
+      "files": [
+        "api/app/Services/SincronizacionService.php",
+        "api/app/Models/OperacionSinConexion.php"
+      ]
+    },
+    {
+      "q": "En la sincronización, ¿qué ocurre con una captura de hace 10 días o con una hora del equipo adelantada 20 minutos?",
+      "answer": "Se rechaza y queda registrada con su motivo. El límite es de 7 días (`DIAS_MAXIMOS`, `SUPUESTO`) y se toleran 5 minutos de reloj adelantado; más que eso responde \"La hora del equipo está adelantada\". Los límites frenan lo peor si el equipo tiene mal la hora.",
+      "files": [
+        "api/app/Services/SincronizacionService.php",
+        "docs/decisiones/ADR-018-modo-sin-conexion.md"
+      ]
+    },
+    {
+      "q": "Si el servidor responde error 5xx a una operación durante la sincronización, ¿qué le pasa a esa operación y a las siguientes?",
+      "answer": "Esa operación no se guarda y queda como `pendiente`; el servicio se detiene y todas las que siguen también quedan `pendiente`, porque dependen del orden. El equipo las reintentará. En cambio, un error 4xx se guarda como `rechazada` con el motivo, y las que dependían de ella también se rechazan.",
+      "files": [
+        "api/app/Services/SincronizacionService.php",
+        "docs/modulos/sincronizacion.md"
+      ]
+    },
+    {
+      "q": "¿Cómo evita `SincronizacionService` reescribir las reglas de negocio al aplicar lo capturado sin conexión?",
+      "answer": "Reenvía cada operación, dentro del mismo proceso, a la ruta que la pantalla habría usado (tabla `TIPOS`), autenticada como el empleado y con `Carbon::setTestNow` en `capturado_at`. Así pasan los mismos Form Requests, permisos y servicios, y reglas como \"uno por día\" o \"hora no futura\" se evalúan como si fuera ese momento. Se descartó pasar un `$cuando` a unos 15 servicios.",
+      "files": [
+        "api/app/Services/SincronizacionService.php",
+        "docs/decisiones/ADR-018-modo-sin-conexion.md"
+      ]
+    },
+    {
+      "q": "¿Cómo puede entrar un empleado sin conexión sin guardar su PIN en el equipo?",
+      "answer": "Cuando alguien entra con conexión, la app guarda una huella: SHA-256 de una sal al azar de 16 bytes más lo escrito. Sin conexión se recalcula con la misma sal y se compara. Por eso solo puede entrar quien ya había entrado antes en ese equipo; el PIN en claro nunca se almacena.",
+      "files": [
+        "app/src/app/core/sin-conexion/huellas.ts",
+        "docs/decisiones/ADR-018-modo-sin-conexion.md"
+      ]
+    },
+    {
+      "q": "¿Qué patrón es `ProveedorBeneficioSinConexion` y qué ventaja da a las pantallas?",
+      "answer": "Es un Decorator: envuelve al proveedor de la API con la misma interfaz (`ProveedorBeneficio`). Con conexión pasa todo directo y guarda copias; sin conexión lee la copia y guarda en la bandeja. Las pantallas no cambian porque siguen usando el token `PROVEEDOR_BENEFICIO`. Además `main.ts` elige el proveedor, que es Strategy.",
+      "files": [
+        "app/src/app/core/proveedor-beneficio-sin-conexion.ts",
+        "app/src/app/core/proveedor-beneficio.ts",
+        "docs/modulos/sincronizacion.md"
+      ]
+    },
+    {
+      "q": "¿Cómo se evita que `ProveedorAcceso` obligue a reescribir las pantallas al pasar de la demo a la API?",
+      "answer": "`ProveedorAcceso` es una clase abstracta con dos implementaciones (patrón Strategy): `ProveedorAccesoApi` y `ProveedorAccesoDemo`. `main.ts` escoge según `environment.usarApi` con el token `PROVEEDOR_ACCESO`. Las pantallas y `SesionService` no cambian, y la demo queda como respaldo para presentaciones.",
+      "files": [
+        "app/src/app/core/proveedor-acceso.ts",
+        "app/src/app/core/proveedor-acceso-api.ts",
+        "app/src/app/core/proveedor-acceso-demo.ts",
+        "docs/decisiones/ADR-005-conexion-kiosco-api.md"
+      ]
+    },
+    {
+      "q": "¿Qué significa el trait `EsInmutable` y por qué está en el modelo y no solo en la API?",
+      "answer": "Hace que un registro guardado no se pueda modificar ni borrar: los eventos `updating` y `deleting` lanzan `RegistroInmutable`. Es la regla de la dirección: \"se corrige antes de guardar, no después\". Está en el modelo para que ni el panel, la consola ni un error puedan alterar evidencia de auditoría.",
+      "files": [
+        "api/app/Models/Concerns/EsInmutable.php",
+        "api/app/Exceptions/RegistroInmutable.php",
+        "docs/decisiones/ADR-007-lotes-y-formato-recepcion.md"
+      ]
+    },
+    {
+      "q": "Una hornada se llena en dos momentos (entrada y salida). ¿Cómo se concilia eso con la inmutabilidad?",
+      "answer": "`Hornada` no usa `EsInmutable` tal cual: la entrada nunca se modifica, la salida se escribe una sola vez (solo si estaba vacía, y solo en los campos `CAMPOS_SALIDA`) y no se borra. Se eligió el modelo de dos pasos para que la hora la ponga el sistema en ambos momentos, no la persona. Cuando salen todas las cajas del lote, pasa automáticamente al paso 5.",
+      "files": [
+        "api/app/Models/Hornada.php",
+        "docs/decisiones/ADR-010-hornadas-en-dos-momentos.md",
+        "api/app/Services/HornoService.php"
+      ]
+    },
+    {
+      "q": "¿Cómo se forma el código de un lote verde como `PAL-26304` y qué pasa si ya existe uno igual el mismo día?",
+      "answer": "`LoteService::codigoPara` arma `SIGLAS-AADDD`: siglas de la comunidad, año de 2 dígitos y día juliano (el 31 de octubre de 2026 es el día 304). Si el código ya existe, `codigoLibre` agrega una letra (`PAL-26304-B`). El formato es un `SUPUESTO` y vive en una sola función para cambiarlo fácil. El del despezonado es `D-AADDD`.",
+      "files": [
+        "api/app/Services/LoteService.php",
+        "docs/decisiones/ADR-007-lotes-y-formato-recepcion.md",
+        "docs/decisiones/ADR-009-lotes-que-se-juntan-despezonado.md"
+      ]
+    },
+    {
+      "q": "¿Qué ocurre con los lotes verdes cuando se registra un despezonado y cómo se recorre la trazabilidad hacia atrás?",
+      "answer": "El despezonado crea un lote nuevo (`tipo = despezonado`) en la misma tabla `lotes`, y la tabla `lote_composicion` guarda qué lotes verdes lo forman. Los verdes pasan a `estado = integrado` y salen de la lista de en proceso. Hacia atrás: `D-26307` → orígenes (`PAL-26307`, `CEI-26307`) → recepciones → productores. Así los formatos 4 a 7 solo conocen \"un lote\".",
+      "files": [
+        "docs/decisiones/ADR-009-lotes-que-se-juntan-despezonado.md",
+        "api/app/Services/DespezonadoService.php",
+        "api/app/Models/Lote.php"
+      ]
+    },
+    {
+      "q": "Caso límite: en la Recepción alguien marca \"aceptada\" una entrega con moho. ¿Qué hace el sistema?",
+      "answer": "El servidor lo impide: con moho la entrega se rechaza, aunque la pantalla mande \"aceptada\". La regla vive en el servidor, no solo en la pantalla. En el despezonado, en cambio, una caja con moho no bloquea: se anota (`exenta_mohos = false`) y se pinta de rojo hasta que Calidad decida qué hacer.",
+      "files": [
+        "docs/decisiones/ADR-007-lotes-y-formato-recepcion.md",
+        "api/app/Services/RecepcionService.php",
+        "docs/decisiones/ADR-009-lotes-que-se-juntan-despezonado.md"
+      ]
+    },
+    {
+      "q": "¿Qué pasa si un operador toca \"Terminar sudado\" antes del día 90? ¿Se bloquea?",
+      "answer": "No se bloquea. La pantalla avisa cuántos días lleva y pide confirmación; decide la persona encargada, como acordó Gaya el 13 de noviembre. Los 90 días son de calendario desde el primer registro (`SUPUESTO`). También exige que no haya renglones abiertos (vainilla en el patio).",
+      "files": [
+        "docs/decisiones/ADR-017-lugares-y-dos-momentos-sudado-secado.md",
+        "api/app/Services/CierreEtapaService.php",
+        "app/src/app/paginas/sudado/sudado.page.ts"
+      ]
+    },
+    {
+      "q": "¿Por qué el clima lo consulta la API de Laravel con caché de 30 minutos y no cada pantalla directamente a Open-Meteo, y qué pasa si falla?",
+      "answer": "Con la API, una sola consulta sirve a todas las pantallas, las coordenadas viven en la base y se puede probar con respuestas simuladas. `ClimaService` guarda la respuesta 30 minutos en `Cache` y espera máximo 8 s. Si falla, devuelve \"no disponible\" y nada se bloquea. Se eligió Open-Meteo porque no pide llave ni registro; cumple el requisito de API externa de la escuela.",
+      "files": [
+        "api/app/Services/ClimaService.php",
+        "docs/decisiones/ADR-016-clima-open-meteo.md",
+        "api/app/Http/Controllers/Api/V1/ClimaController.php"
+      ]
+    },
+    {
+      "q": "¿Por qué la zona horaria es `America/Mexico_City` y se prohíbe `IntlDateFormatter` para formatear fechas?",
+      "answer": "Guardar y mostrar en hora local hace que lo que se ve en la BD sea lo que pasó en planta, y las fechas son evidencia de auditoría. Se usa el nombre de zona y no un desfase fijo por si cambia el horario. `IntlDateFormatter` se descartó porque el ICU de XAMPP trae datos de 2022a y en verano muestra una hora de más; se usa `Carbon::translatedFormat()`. La app manda fechas ISO 8601 con desfase, importante en el modo sin conexión.",
+      "files": [
+        "docs/decisiones/ADR-003-zona-horaria.md",
+        "api/config/app.php"
+      ]
+    },
+    {
+      "q": "¿Por qué el proyecto móvil prueba con Vitest y no con Jasmine/Karma como decía el Reporte?",
+      "answer": "Karma fue declarado obsoleto por sus autores y Angular 22 genera los proyectos con Vitest; además no necesita un navegador instalado (en la máquina solo hay Edge). La pirámide de pruebas es la misma y la sintaxis `describe/it/expect` también; solo cambia `jasmine.createSpy` por `vi.fn()`. Queda pendiente avisar a la maestra y actualizar el Reporte.",
+      "files": [
+        "docs/decisiones/ADR-002-proyecto-movil-ionic.md",
+        "docs/decisiones/ADR-001-stack-tecnologico.md"
+      ]
+    }
+  ],
+  "challenges": [
+    {
+      "prompt": "Muéstrame el controlador que valida el acceso de los operadores y de Dirección al kiosco.",
+      "file": "api/app/Http/Controllers/Api/V1/AccesoController.php",
+      "hints": [
+        "Está en la API de Laravel, dentro de los controladores de la versión 1.",
+        "Tiene que ver con entrar al sistema: el controlador de acceso, sin ser el de usuarios."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el servicio que cuenta los intentos fallidos y bloquea el acceso temporalmente.",
+      "file": "api/app/Services/ControlDeIntentos.php",
+      "hints": [
+        "Está en la carpeta de servicios de la API.",
+        "Su nombre habla de controlar algo que se cuenta cuando alguien se equivoca."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el middleware que deja pasar a una petición solo si el usuario tiene el rol permitido.",
+      "file": "api/app/Http/Middleware/VerificarRol.php",
+      "hints": [
+        "Está en la API, en la parte HTTP, entre la petición y el controlador.",
+        "Su nombre empieza con un verbo de comprobar y termina con la palabra rol."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el archivo donde se declaran todas las rutas de la API con su prefijo de versión.",
+      "file": "api/routes/api.php",
+      "hints": [
+        "Está en la carpeta de rutas de Laravel.",
+        "No es el de rutas web ni el de consola: es el de las rutas de la API."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el trait que impide modificar o borrar registros una vez guardados.",
+      "file": "api/app/Models/Concerns/EsInmutable.php",
+      "hints": [
+        "Está junto a los modelos de la API, en una subcarpeta de comportamientos compartidos.",
+        "Su nombre dice que el registro 'es' algo que no puede cambiar."
+      ]
+    },
+    {
+      "prompt": "Muéstrame la interfaz y su implementación en Eloquent que consulta los datos del tablero de Dirección (patrón Repository).",
+      "file": "api/app/Repositories/EloquentTableroRepository.php",
+      "hints": [
+        "Está en la carpeta de repositorios de la API.",
+        "Es la clase concreta que empieza con el nombre del ORM y termina con 'Repository'."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el servicio que arma el archivo de Excel con la información de los reportes.",
+      "file": "api/app/Services/ReporteExcelService.php",
+      "hints": [
+        "Está en los servicios de la API.",
+        "Su nombre combina reporte, un formato de hoja de cálculo y 'Service'."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el servicio que consulta el pronóstico del tiempo en un servicio externo.",
+      "file": "api/app/Services/ClimaService.php",
+      "hints": [
+        "Está en los servicios de la API.",
+        "Se conecta a una API externa gratuita para saber si va a llover."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el servicio que recibe las operaciones guardadas sin señal y las procesa al volver la conexión.",
+      "file": "api/app/Services/SincronizacionService.php",
+      "hints": [
+        "Está en los servicios de la API.",
+        "Tiene que ver con sincronizar lo que la app guardó offline."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el comando de consola que da de alta un dispositivo (como la TV) en el sistema.",
+      "file": "api/app/Console/Commands/CrearDispositivo.php",
+      "hints": [
+        "Está en la API, en la carpeta de comandos de Artisan.",
+        "Su nombre empieza con un verbo de crear y termina con el tipo de equipo."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el servicio de la app que guarda y reenvía las operaciones pendientes y avisa del estado de la conexión.",
+      "file": "app/src/app/core/sin-conexion/sync.service.ts",
+      "hints": [
+        "Está en la app Ionic, dentro de core, en una subcarpeta del modo sin señal.",
+        "Es el servicio con nombre corto en inglés (sync) y la palabra service."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el interceptor de la app que agrega el token a cada petición HTTP hacia la API.",
+      "file": "app/src/app/core/api.interceptor.ts",
+      "hints": [
+        "Está en la app Ionic, en la carpeta core.",
+        "Su nombre dice que intercepta las peticiones a la API."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el archivo de la app que define las rutas de las pantallas y qué páginas se cargan.",
+      "file": "app/src/app/app.routes.ts",
+      "hints": [
+        "Está en la raíz del código de Angular en la app.",
+        "Su nombre combina app y rutas."
+      ]
+    },
+    {
+      "prompt": "Muéstrame el archivo que define los datos de configuración de Capacitor para generar el APK.",
+      "file": "app/capacitor.config.ts",
+      "hints": [
+        "Está en la raíz de la carpeta de la app móvil, fuera de src.",
+        "Lleva el nombre de la herramienta que empaqueta la app para Android."
+      ]
+    },
+    {
+      "prompt": "Muéstrame la decisión de arquitectura que explica cómo funciona el modo sin conexión.",
+      "file": "docs/decisiones/ADR-018-modo-sin-conexion.md",
+      "hints": [
+        "Está en la documentación, en la carpeta de decisiones.",
+        "Es el ADR número 18 y habla de trabajar sin señal."
+      ]
+    }
+  ]
+}

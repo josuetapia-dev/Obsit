@@ -29,6 +29,27 @@ npm start
 
 Las explicaciones se guardan: si el archivo no cambia, la segunda vez responde al instante (dice "guardado").
 
+## Modo estudio (sin Claude Code, gratis)
+
+Si no tienes Claude Code (plan gratuito), Obsi-boty funciona en **modo estudio** con el paquete que está en `paquetes/<proyecto>.json`:
+
+| Funciona | Cómo |
+|---|---|
+| Tour del proyecto | Completo, igual que con Claude |
+| Explicar archivos | Los ~33 archivos más importantes, al instante |
+| Preguntas de examen | Banco de preguntas; escribes tu respuesta, ves la correcta y te calificas |
+| Retos "muéstrame" | Completos, con pistas y detección del archivo que abres |
+| Chat libre | No; busca en el paquete y te sugiere archivos relacionados |
+
+**Para actualizar el paquete** (quien tenga Claude Code): clic derecho en el robot → **Generar paquete de estudio**, o desde la terminal:
+
+```powershell
+cd C:\dev\JOPE-AR\obsi-boty
+node src/pack.js C:\dev\gaya\gaya-vainilla
+```
+
+Tarda unos 2 minutos. Luego commit + push, y el equipo hace `git pull`.
+
 ## Primera vez: iniciar sesión en Claude Code
 
 Obsi-boty usa Claude Code en modo automático (`claude -p`) con **tu suscripción**. Fuera de la app de escritorio hay que iniciar sesión una vez:
