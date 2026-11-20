@@ -9,7 +9,8 @@
     "acceso-directo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/crear-acceso-directo.ps1"
   },
   "dependencies": {
-    "three": "0.160.0"
+    "three": "0.160.0",
+    "vosk-browser": "^0.0.8"
   },
   "devDependencies": {
     "electron": "^33.2.1"

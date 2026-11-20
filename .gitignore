@@ -14,3 +14,6 @@ Thumbs.db
 
 # La extensión empaquetada SÍ se sube (obsi-boty/vscode-extension/obsi-boty-vscode.vsix)
 # para que el equipo la instale sin compilar nada.
+
+# Modelo de voz (se descarga solo la primera vez que activas "Oye Obsi")
+obsi-boty/modelos/

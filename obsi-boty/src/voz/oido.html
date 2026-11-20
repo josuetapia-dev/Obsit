@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Obsi-boty — oído</title>
+<script src="../../node_modules/vosk-browser/dist/vosk.js"></script>
+</head>
+<body>
+<script>
+// Obsi-boty's ear: offline Spanish recognition with Vosk (WebAssembly). Lives in a hidden window.
+//  wake    → listens for "Oye Obsi"; if the command comes in the same breath ("oye obsi, abre el tour") it's sent at once
+//  command → captures one phrase after the wake word (or after the mic button / shortcut)
+//  dictate → captures a longer answer (mock defense) until ~2.5 s of silence
+//  off     → microphone audio is ignored (and not processed, to save CPU)
+const MODEL_URL = 'http://127.0.0.1:47321/modelo-voz.tar.gz';
+let mode = 'off', muted = false, rec = null, audioCtx = null, stream = null;
+let collected = [], silenceTimer = null, commandTimer = null, wakeSent = false;
+
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+// The model doesn't know the word "Obsi", so it hears something close: "o si", "obsi", "ovni", "opción"...
+// Accept "oye/hey/oiga" followed by a short word starting with o/a/u, or "obsidiana".
+const WAKE = /\b(oye|oie|hoy|hey|ey|oiga|olle)\s+(?:(?:o|a|u|ob|op|of|ov|ab)[a-zñ]{0,6}(?:\s+(?:si|psi|bsi|cy|ci|se|c))?|obsidiana)\b/;
+function splitWake(text) {
+  const t = norm(text), m = t.match(WAKE);
+  return m ? { rest: t.slice(m.index + m[0].length).replace(/^[\s,.]+/, '').trim() } : null;
+}
+
+function setMode(m) {
+  mode = m;
+  clearTimeout(silenceTimer); clearTimeout(commandTimer); collected = [];
+  if (m === 'command') commandTimer = setTimeout(() => { if (mode === 'command') { ear.send('timeout'); setMode(afterMode); } }, 8000);
+  if (m === 'dictate') commandTimer = setTimeout(() => finishDictation(), 90000);   // hard cap 90 s
+  if (m !== 'off') startMic().catch(e => ear.send('error', 'No pude usar el micrófono: ' + e.message));
+}
+let afterMode = 'off';                                     // where to go back after a command/dictation
+
+function finishDictation() {
+  const text = collected.join(' ').trim();
+  clearTimeout(silenceTimer); clearTimeout(commandTimer);
+  if (text) ear.send('dictation', text); else ear.send('timeout');
+  setMode(afterMode);
+}
+
+function onPartial(p) {
+  if (muted || mode === 'off') return;
+  const partial = p.result.partial || '';
+  if (!partial) return;
+  if (mode === 'wake') { if (!wakeSent && splitWake(partial)) { wakeSent = true; ear.send('wake'); } return; }
+  ear.send('partial', (collected.join(' ') + ' ' + partial).trim());
+  if (mode === 'dictate') { clearTimeout(silenceTimer); }
+}
+
+function onResult(r) {
+  if (muted || mode === 'off') return;
+  const text = (r.result.text || '').trim();
+  if (!text) return;
+  if (mode === 'wake') {
+    const w = splitWake(text);
+    const already = wakeSent; wakeSent = false;
+    if (!w) return;
+    if (w.rest.split(/\s+/).filter(Boolean).length >= 2) { ear.send('command', w.rest); return; }
+    if (!already) ear.send('wake');
+    afterMode = 'wake'; setMode('command');
+  } else if (mode === 'command') {
+    const w = splitWake(text);
+    if (w && !w.rest) return;                              // just the wake word again: keep waiting for the command
+    ear.send('command', w ? w.rest : text);
+    setMode(afterMode);
+  } else if (mode === 'dictate') {
+    collected.push(text);
+    ear.send('partial', collected.join(' '));
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(finishDictation, 2500);
+  }
+}
+
+async function loadModel() {
+  const model = await Vosk.createModel(MODEL_URL, -1);
+  rec = new model.KaldiRecognizer(16000);
+  rec.on('result', onResult);
+  rec.on('partialresult', onPartial);
+}
+
+let processor = null;
+async function startMic() {
+  if (stream) return;
+  stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  audioCtx = new AudioContext();
+  const source = audioCtx.createMediaStreamSource(stream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = e => {
+    if (mode === 'off' || muted || !rec) return;
+    try { rec.acceptWaveformFloat(e.inputBuffer.getChannelData(0), audioCtx.sampleRate); } catch (err) { /* keep listening */ }
+  };
+  source.connect(processor); processor.connect(audioCtx.destination);
+}
+
+// debug/test: feed a wav file through the recognizer as if it came from the mic
+async function testFile({ url, as }) {
+  const buf = await (await fetch(url)).arrayBuffer();
+  const ctx = new OfflineAudioContext(1, 16000, 16000);
+  const audio = await ctx.decodeAudioData(buf);
+  const data = audio.getChannelData(0), step = 4096;
+  mode = as; muted = false; collected = []; afterMode = 'off';
+  for (let i = 0; i < data.length; i += step) rec.acceptWaveformFloat(data.slice(i, i + step), audio.sampleRate);
+  rec.acceptWaveformFloat(new Float32Array(audio.sampleRate * 1.2), audio.sampleRate);    // a bit of silence to close the phrase
+  rec.retrieveFinalResult();
+}
+
+ear.onMode(m => { afterMode = m.after || afterMode; setMode(m.mode); });
+ear.onMute(on => { muted = !!on; });
+ear.onTest(p => testFile(p).catch(e => ear.send('error', 'test: ' + e.message)));
+
+loadModel().then(() => ear.send('ready')).catch(e => ear.send('error', 'No pude cargar el modelo de voz: ' + (e && e.message || e)));
+</script>
+</body>
+</html>

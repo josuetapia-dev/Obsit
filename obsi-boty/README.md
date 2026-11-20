@@ -82,3 +82,19 @@ Solo envía la ruta del archivo abierto a `127.0.0.1:47321` (tu propia computado
 - `src/renderer/robot.js` — el robot en 3D (Three.js).
 - `src/renderer/bubble.html` — el globo de texto.
 - Variables opcionales: `OBSI_MODEL` (modelo, por defecto `sonnet`), `OBSI_CLAUDE` (ruta a `claude.exe`).
+
+## Voz: "Oye Obsi"
+
+Obsi-boty habla con las voces de Windows (Raúl o Sabina) y te escucha con **Vosk**, un reconocedor de voz en español que corre en tu compu: el audio nunca sale de ella.
+
+| Quieres | Haz esto |
+|---|---|
+| Que te escuche siempre | Clic derecho → **Escuchar «Oye Obsi»**. La primera vez descarga el modelo de voz (~40 MB, una sola vez) |
+| Hablarle sin decir "Oye Obsi" | Botón 🎤 del chat, o `Ctrl+Alt+Espacio` desde cualquier lugar |
+| Simulacro de defensa hablado | Clic derecho → **Simulacro de defensa oral**: pregunta en voz alta y escucha tu respuesta |
+| Que deje de hablar | Di "Oye Obsi, cállate", escribe algo o apaga **Hablar en voz alta** |
+| Que se encienda con la compu | Clic derecho → **Iniciar con Windows** |
+
+Comandos rápidos por voz: "dame el tour", "simulacro", "explícame este archivo", "siguiente" / "anterior" (en el tour), "hazme una pregunta", "reto", "cállate", "duérmete". Todo lo demás se lo pregunta a Claude (o busca en el paquete en modo estudio).
+
+Si no te escucha: revisa en Windows **Configuración → Privacidad → Micrófono** que las apps de escritorio puedan usarlo.

@@ -4,13 +4,14 @@
 // - A chat bubble window next to the robot: explanations, free questions, "show me the file that...", quiz mode.
 // - The "brain" (brain.js) talks to Claude Code in headless mode, read-only, inside the project folder.
 
-const { app, BrowserWindow, screen, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Menu, globalShortcut } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const brain = require('./cerebro/brain');
 const studyPack = require('./cerebro/pack');
+const voiceModel = require('./voz/modelo');
 
 // online = Claude Code is available. Without it (free plan) Obsi-boty runs in "study mode" from the study pack.
 let online = true;
@@ -30,7 +31,7 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 let win = null, bubble = null;
 let dragTimer = null, cursorTimer = null, quizTimer = null;
 let bubbleHeight = 160, bubbleOpen = false;
-let settings = { lastWorkspace: null, quiz: true, toursOffered: {}, speak: true, voiceName: 'Raul', autostart: false };
+let settings = { lastWorkspace: null, quiz: true, toursOffered: {}, speak: true, voiceName: 'Raul', autostart: false, listen: false };
 let lastActivity = Date.now(), lastQuiz = Date.now() - QUIZ_EVERY_MS + QUIZ_FIRST_MS;
 
 // what the VS Code extension last told us
@@ -181,7 +182,96 @@ const post = m => {
 // ---------- voice out (Windows voices, offline; spoken from the bubble page) ----------
 function say(text) { if (bubble && text) bubble.webContents.send('speak', { text, voice: settings.voiceName }); }
 function shutUp() { if (bubble) bubble.webContents.send('stop-speaking'); }
-ipcMain.on('speaking', (_e, on) => { dbg(`speaking ${on}`); if (win && !win.isDestroyed()) win.webContents.send('talking', on); });
+ipcMain.on('speaking', (_e, on) => {
+  dbg(`speaking ${on}`);
+  if (win && !win.isDestroyed()) win.webContents.send('talking', on);
+  earSend('ear-mute', on);                                  // don't hear himself
+  // mock defense: once he finishes asking, listen for your spoken answer
+  if (!on && sim && sim.waiting && earReady) setEarMode('dictate', listenAfter());
+});
+
+// ---------- voice in (Vosk, offline, in a hidden window) ----------
+let ear = null, earReady = false, earStarting = null;
+const earSend = (ch, data) => { if (ear && !ear.isDestroyed()) ear.webContents.send(ch, data); };
+const listenAfter = () => settings.listen ? 'wake' : 'off';
+function setEarMode(mode, after = listenAfter()) { earSend('ear-mode', { mode, after }); }
+
+// make sure the model exists and the ear window is loaded; resolves when it's ready to listen
+function ensureEar() {
+  if (earReady) return Promise.resolve();
+  if (earStarting) return earStarting;
+  earStarting = (async () => {
+    if (!voiceModel.exists()) {
+      openPanel();
+      post({ role: 'bot', kind: 'hint', silent: true, text: 'Primera vez: voy a descargar mi oído en español (unos 40 MB, del sitio oficial de Vosk). Solo pasa una vez.' });
+      await voiceModel.ensure(m => loading(m));
+      loading(null);
+    }
+    await new Promise((resolve, reject) => {
+      ear = new BrowserWindow({ show: false, width: 200, height: 100, skipTaskbar: true, focusable: false,
+        webPreferences: { preload: path.join(__dirname, 'voz', 'oido-preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+      ear.loadFile(path.join(__dirname, 'voz', 'oido.html'));
+      ear.webContents.on('console-message', (_e, level, message) => { if (level >= 2) dbg('[oido] ' + message); });
+      const t = setTimeout(() => reject(new Error('el modelo de voz tardó demasiado en cargar')), 60000);
+      earStartWait = { resolve: () => { clearTimeout(t); resolve(); }, reject: e => { clearTimeout(t); reject(e); } };
+    });
+    earReady = true;
+  })().catch(e => {
+    earStarting = null; loading(null);
+    if (ear && !ear.isDestroyed()) ear.destroy(); ear = null;
+    post({ role: 'bot', kind: 'error', text: `No pude activar el oído: ${e.message}` });
+    throw e;
+  });
+  return earStarting;
+}
+let earStartWait = null, testAudio = null;
+
+ipcMain.on('ear', (_e, { type, data }) => {
+  dbg(`ear ${type} ${data || ''}`);
+  if (type === 'ready') { if (earStartWait) earStartWait.resolve(); return; }
+  if (type === 'error') { if (earStartWait && !earReady) earStartWait.reject(new Error(data)); else post({ role: 'bot', kind: 'error', text: data }); return; }
+  if (type === 'wake') { shutUp(); sendState('escuchar', 'reposo', 8000); openPanel(); bubble.webContents.send('listening', true); return; }
+  if (type === 'partial') { bubble.webContents.send('partial', data); return; }
+  if (type === 'timeout') { bubble.webContents.send('listening', false); sendState('reposo'); return; }
+  if (type === 'command' || type === 'dictation') { bubble.webContents.send('listening', false); voiceCommand(String(data)); }
+});
+
+// what you said → a local shortcut when it's obvious (instant), otherwise the normal chat
+function voiceCommand(text) {
+  const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (sim && sim.waiting) return chat(text);                                   // spoken answer in the mock defense
+  if (/\b(callate|silencio|deja de hablar|basta)\b/.test(t)) { shutUp(); return; }
+  if (/\b(duermete|a dormir|descansa)\b/.test(t)) { shutUp(); sendState('dormir'); return; }
+  if (/\b(simulacro|defensa)\b/.test(t)) return startSim();
+  if (/\btour\b|\brecorrido\b/.test(t)) return startTour();
+  if (/\bexplica(me)?\b.*\b(este|el|ese) archivo\b|\bque hace este archivo\b/.test(t)) { openPanel(); return explainCurrent(); }
+  if (/\b(siguiente|continua|adelante)\b/.test(t) && tour) return showTourStep(tour.i + 1);
+  if (/\b(anterior|atras|regresa)\b/.test(t) && tour) return showTourStep(tour.i - 1);
+  if (/\bpregunta(me)?\b|\bexamen\b/.test(t) && t.split(' ').length <= 6) return chat(QUIZ_PROMPT);
+  if (/\breto\b/.test(t)) return chat(FIND_PROMPT);
+  if (/^(hola|que tal|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(t) && t.split(' ').length <= 4) {
+    sendState('saludar', 'reposo', 2500); openPanel(); return post({ role: 'bot', text: '¡Hola, Josué! ¿En qué te ayudo? Puedo explicarte un archivo, darte el tour o hacerte un simulacro de defensa.' });
+  }
+  chat(text);
+}
+
+// push-to-talk: mic button in the chat, Ctrl+Alt+Espacio, or "listen-now" from anywhere
+async function listenNow() {
+  try { await ensureEar(); } catch { return; }
+  shutUp(); sendState('escuchar', 'reposo', 8000); openPanel();
+  bubble.webContents.send('listening', true);
+  setEarMode(sim && sim.waiting ? 'dictate' : 'command');
+}
+ipcMain.on('listen-now', listenNow);
+
+async function setListen(on) {
+  settings.listen = !!on; saveSettings();
+  if (!on) { setEarMode('off', 'off'); return; }
+  try { await ensureEar(); } catch { settings.listen = false; saveSettings(); return; }
+  setEarMode('wake', 'wake');
+  sendState('saludar', 'reposo', 2500);
+  say('Listo. Cuando me necesites, di: oye Obsi.');
+}
 const loading = t => bubble && bubble.webContents.send('loading', t);
 
 ipcMain.on('bubble-height', (_e, h) => { bubbleHeight = Math.max(80, Math.min(Math.ceil(h), 520)); placeBubble(); });
@@ -678,6 +768,15 @@ ipcMain.on('robot-click', () => {
 // ---------- local server for the VS Code extension ----------
 function startServer() {
   const server = http.createServer((req, res) => {
+    if (process.env.OBSI_DEBUG && req.method === 'GET' && req.url.startsWith('/test-audio') && testAudio) {
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Access-Control-Allow-Origin': '*' });
+      fs.createReadStream(testAudio).pipe(res); return;
+    }
+    // the ear window's Web Worker downloads the speech model from here (it can't read file:// URLs)
+    if (req.method === 'GET' && req.url === '/modelo-voz.tar.gz' && voiceModel.exists()) {
+      res.writeHead(200, { 'Content-Type': 'application/gzip', 'Access-Control-Allow-Origin': '*' });
+      fs.createReadStream(voiceModel.MODEL_FILE).pipe(res); return;
+    }
     if (req.method !== 'POST' || req.url !== '/event') { res.writeHead(404).end(); return; }
     let body = '';
     req.on('data', d => { body += d; if (body.length > 1e5) req.destroy(); });
@@ -696,6 +795,11 @@ function onEditorEvent(ev) {
   // debug only: simulate typing in the chat or pressing a chat button
   if (process.env.OBSI_DEBUG && ev.type === 'say') return chat(ev.text);
   if (process.env.OBSI_DEBUG && ev.type === 'act') return handleAction(ev.value);
+  // debug only: run a wav file through the ear as if you had spoken it
+  if (process.env.OBSI_DEBUG && ev.type === 'eartest') {
+    testAudio = ev.wav;
+    return ensureEar().then(() => earSend('ear-test', { url: `http://127.0.0.1:${PORT}/test-audio?${Date.now()}`, as: ev.as || 'wake' })).catch(() => {});
+  }
   const wasFocused = ctx.focused, prevFile = ctx.file;
   ctx.focused = !!ev.focused;
   if (ev.file !== undefined) {
@@ -753,6 +857,8 @@ ipcMain.on('menu', () => {
     { label: 'Simulacro de defensa oral', enabled: !busy, click: () => startSim() },
     { label: 'Preguntas sorpresa', type: 'checkbox', checked: settings.quiz, click: i => { settings.quiz = i.checked; saveSettings(); } },
     { type: 'separator' },
+    { label: 'Escuchar «Oye Obsi»', type: 'checkbox', checked: settings.listen, click: i => setListen(i.checked) },
+    { label: 'Hablarle ahora (Ctrl+Alt+Espacio)', click: listenNow },
     { label: 'Hablar en voz alta', type: 'checkbox', checked: settings.speak, click: i => { settings.speak = i.checked; saveSettings(); if (!i.checked) shutUp(); } },
     { label: 'Voz', submenu: [['Raul', 'Raúl'], ['Sabina', 'Sabina']].map(([v, l]) => ({
         label: l, type: 'radio', checked: settings.voiceName === v,
@@ -785,7 +891,9 @@ app.whenReady().then(() => {
   brain.initTours(app.getPath('userData'));
   createWindow();
   startServer();
+  globalShortcut.register('Control+Alt+Space', listenNow);
+  if (settings.listen && voiceModel.exists()) setTimeout(() => ensureEar().then(() => setEarMode('wake', 'wake')).catch(() => {}), 3000);
 });
 app.on('second-instance', () => sendState('saludar', 'reposo', 2800));
-app.on('before-quit', () => { clearInterval(cursorTimer); clearInterval(dragTimer); clearInterval(quizTimer); brain.cancel(); });
+app.on('before-quit', () => { clearInterval(cursorTimer); clearInterval(dragTimer); clearInterval(quizTimer); brain.cancel(); globalShortcut.unregisterAll(); });
 app.on('window-all-closed', () => app.quit());

@@ -40,6 +40,11 @@
   textarea:focus { border-color:var(--border); }
   #send { all:unset; cursor:pointer; background:var(--border); color:#fff; border-radius:10px; padding:7px 11px; font-size:13px; }
   #send:disabled { opacity:.5; cursor:default; }
+  #mic { all:unset; cursor:pointer; font-size:15px; padding:6px 8px; border-radius:10px; border:1px solid #3d2d5e; background:#120d1b; }
+  #mic:hover { border-color:var(--border); }
+  #mic.on { border-color:#ff7fd6; background:rgba(255,127,214,.15); animation:pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 4px rgba(255,127,214,.25); } }
+  textarea.listening { border-color:#ff7fd6; color:#ffd3f1; font-style:italic; }
   ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background:#3a2c55; border-radius:4px; }
 </style>
 </head>
@@ -52,6 +57,7 @@
   </header>
   <div id="log"></div>
   <footer>
+    <button id="mic" title="Hablarle (Ctrl+Alt+Espacio)">🎤</button>
     <textarea id="input" rows="1" placeholder="Pregúntale algo a Obsi-boty…"></textarea>
     <button id="send">Enviar</button>
   </footer>
@@ -146,6 +152,14 @@ input.addEventListener('keydown', e => {
 input.addEventListener('input', autosize);
 addEventListener('keydown', e => { if (e.key === 'Escape') bubble.close(); });
 $('send').onclick = send;
+$('mic').onclick = () => { speechSynthesis.cancel(); bubble.listenNow(); };
+// while the ear is listening, show live what it understands
+bubble.onListening(on => {
+  $('mic').classList.toggle('on', on); input.classList.toggle('listening', on);
+  input.placeholder = on ? 'Te escucho…' : 'Pregúntale algo a Obsi-boty…';
+  if (!on && input.classList.contains('listening') === false) { input.value = ''; autosize(); }
+});
+bubble.onPartial(t => { input.value = t; autosize(); });
 $('close').onclick = () => bubble.close();
 $('reset').onclick = () => bubble.reset();
 

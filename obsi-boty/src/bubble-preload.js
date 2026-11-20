@@ -15,4 +15,7 @@ contextBridge.exposeInMainWorld('bubble', {
   onSpeak: cb => ipcRenderer.on('speak', (_e, p) => cb(p)),          // { text, voice }
   onStopSpeaking: cb => ipcRenderer.on('stop-speaking', () => cb()),
   speaking: on => ipcRenderer.send('speaking', on),
+  listenNow: () => ipcRenderer.send('listen-now'),
+  onListening: cb => ipcRenderer.on('listening', (_e, on) => cb(on)),
+  onPartial: cb => ipcRenderer.on('partial', (_e, t) => cb(t)),
 });
