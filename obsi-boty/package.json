@@ -5,7 +5,8 @@
   "main": "src/main.js",
   "private": true,
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "acceso-directo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/crear-acceso-directo.ps1"
   },
   "dependencies": {
     "three": "0.160.0"

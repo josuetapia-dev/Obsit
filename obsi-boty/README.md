@@ -4,10 +4,14 @@ Mascota de escritorio del equipo **Obsi**. Vive en una esquina de la pantalla y,
 
 ## Abrirlo
 
+La primera vez, crea el acceso directo (Escritorio y menú Inicio, con el ícono del robot):
+
 ```powershell
 cd C:\dev\JOPE-AR\obsi-boty
-npm start
+npm run acceso-directo
 ```
+
+Después, ábrelo con doble clic en **Obsi-boty** en tu escritorio o búscalo en el menú Inicio. También puedes usar `npm start` desde esta carpeta.
 
 ## Usarlo
 
