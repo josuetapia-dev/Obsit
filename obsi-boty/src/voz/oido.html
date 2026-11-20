@@ -19,7 +19,9 @@ let collected = [], silenceTimer = null, commandTimer = null, wakeSent = false;
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 // The model doesn't know the word "Obsi", so it hears something close: "o si", "obsi", "ovni", "opción"...
 // Accept "oye/hey/oiga" followed by a short word starting with o/a/u, or "obsidiana".
-const WAKE = /\b(oye|oie|hoy|hey|ey|oiga|olle)\s+(?:(?:o|a|u|ob|op|of|ov|ab)[a-zñ]{0,6}(?:\s+(?:si|psi|bsi|cy|ci|se|c))?|obsidiana)\b/;
+const OBSI = '(?:(?:o|a|u|ob|op|of|ov|ab)[a-zñ]{0,6}(?:\\s+(?:si|psi|bsi|cy|ci|se|c))?|obsidiana)';
+// "Oye Obsi" ... or "Obsi, a trabajar" (the phrase that wakes him from standby)
+const WAKE = new RegExp(`\\b(?:(?:oye|oie|hoy|hey|ey|oiga|olle)\\s+${OBSI}|${OBSI}\\s+a\\s+trabajar)\\b`);
 function splitWake(text) {
   const t = norm(text), m = t.match(WAKE);
   return m ? { rest: t.slice(m.index + m[0].length).replace(/^[\s,.]+/, '').trim() } : null;

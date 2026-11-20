@@ -93,8 +93,11 @@ Obsi-boty habla con las voces de Windows (Raúl o Sabina) y te escucha con **Vos
 | Hablarle sin decir "Oye Obsi" | Botón 🎤 del chat, o `Ctrl+Alt+Espacio` desde cualquier lugar |
 | Simulacro de defensa hablado | Clic derecho → **Simulacro de defensa oral**: pregunta en voz alta y escucha tu respuesta |
 | Que deje de hablar | Di "Oye Obsi, cállate", escribe algo o apaga **Hablar en voz alta** |
-| Que se encienda con la compu | Clic derecho → **Iniciar con Windows** |
+| Que te espere al prender la compu | Clic derecho → **Esperarme al prender la compu**. Al encender, Obsi no se abre: queda un "guardia" mínimo (~110 MB, con el ícono junto al reloj). Di **"Obsi, a trabajar"** y aparece |
+| Esconderlo sin cerrar el oído | Di **"Oye Obsi, ya terminamos"** o clic derecho → **Esconderme**: Obsi se cierra por completo y el guardia sigue esperando |
 
-Comandos rápidos por voz: "dame el tour", "simulacro", "explícame este archivo", "siguiente" / "anterior" (en el tour), "hazme una pregunta", "reto", "cállate", "duérmete". Todo lo demás se lo pregunta a Claude (o busca en el paquete en modo estudio).
+Comandos rápidos por voz: "Obsi, a trabajar" (despertarlo), "ya terminamos" (esconderlo), "dame el tour", "simulacro", "explícame este archivo", "siguiente" / "anterior" (en el tour), "hazme una pregunta", "reto", "cállate", "duérmete". Todo lo demás se lo pregunta a Claude (o busca en el paquete en modo estudio).
 
 Si no te escucha: revisa en Windows **Configuración → Privacidad → Micrófono** que las apps de escritorio puedan usarlo.
+
+El guardia usa el reconocedor de voz que trae Windows (en inglés), así que entiende "Obsi, a trabajar" y "Oye Obsi" escritos como los pronunciaría un angloparlante. Para apagarlo: clic derecho en su ícono junto al reloj → **Dejar de escuchar**.

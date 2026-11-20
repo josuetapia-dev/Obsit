@@ -230,6 +230,8 @@ ipcMain.on('ear', (_e, { type, data }) => {
   dbg(`ear ${type} ${data || ''}`);
   if (type === 'ready') { if (earStartWait) earStartWait.resolve(); return; }
   if (type === 'error') { if (earStartWait && !earReady) earStartWait.reject(new Error(data)); else post({ role: 'bot', kind: 'error', text: data }); return; }
+  // standby (robot hidden): any wake phrase brings him back
+  if (!win) { if (type === 'wake' || type === 'command') appear(); return; }
   if (type === 'wake') { shutUp(); sendState('escuchar', 'reposo', 8000); openPanel(); bubble.webContents.send('listening', true); return; }
   if (type === 'partial') { bubble.webContents.send('partial', data); return; }
   if (type === 'timeout') { bubble.webContents.send('listening', false); sendState('reposo'); return; }
@@ -241,6 +243,8 @@ function voiceCommand(text) {
   const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (sim && sim.waiting) return chat(text);                                   // spoken answer in the mock defense
   if (/\b(callate|silencio|deja de hablar|basta)\b/.test(t)) { shutUp(); return; }
+  if (/\b(ya terminamos|hasta luego|nos vemos|adios|escondete|ocultate)\b/.test(t)) return hideToStandby();
+  if (/^a trabajar\b/.test(t)) { sendState('saludar', 'reposo', 2500); openPanel(); return post({ role: 'bot', text: '¡Aquí estoy! ¿En qué trabajamos?' }); }
   if (/\b(duermete|a dormir|descansa)\b/.test(t)) { shutUp(); sendState('dormir'); return; }
   if (/\b(simulacro|defensa)\b/.test(t)) return startSim();
   if (/\btour\b|\brecorrido\b/.test(t)) return startTour();
@@ -636,12 +640,51 @@ function endSim(silent = false) {
   sim = null;
 }
 
-// ---------- start with Windows ----------
+// ---------- standby ("modo guardia") ----------
+// While hidden, Obsi-boty does NOT keep running: a tiny PowerShell listener (src/voz/guardia.ps1, ~110 MB, Windows'
+// own recognizer) waits for "Obsi, a trabajar" / "Oye Obsi" and opens the app again with --despertar.
+const GUARD_SCRIPT = path.join(__dirname, 'voz', 'guardia.ps1');
+const POWERSHELL = path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+const guardArgs = () => ['-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', GUARD_SCRIPT];
+
 function setAutostart(on) {
   settings.autostart = !!on; saveSettings();
-  // unpackaged app: start electron.exe with this app's folder as argument
-  app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath, args: [app.getAppPath()] });
-  if (on) say('Listo, me encenderé cuando prendas la computadora.');
+  // at Windows login start only the guardian (not the whole app)
+  app.setLoginItemSettings({ openAtLogin: !!on, path: POWERSHELL, args: guardArgs(), name: 'ObsiBotyGuardia' });
+  if (on) say('Listo. Cuando prendas la computadora me quedaré esperando. Di: Obsi, a trabajar, y aparezco.');
+}
+
+// Created through WMI so it is fully independent: Electron takes its own child processes down when it quits.
+function startGuardian() {
+  const cmdline = `"${POWERSHELL}" ${guardArgs().map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`;
+  const ps = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${cmdline.replace(/'/g, "''")}' } | Out-Null`;
+  return new Promise(resolve => {
+    const child = spawn(POWERSHELL, ['-NoProfile', '-Command', ps], { windowsHide: true, stdio: 'ignore' });
+    child.on('exit', resolve); child.on('error', resolve);
+  });
+}
+
+function appear() {
+  dbg(`appear (visible=${!!win})`);
+  if (win) { sendState('saludar', 'reposo', 2500); return; }
+  createWindow();
+}
+
+// greeting when the guardian woke us up
+function greetOnWake() {
+  win.webContents.once('did-finish-load', () => setTimeout(() => {
+    sendState('saludar', 'reposo', 3000);
+    say(['¡Listo, Josué! ¿En qué trabajamos hoy?', '¡A trabajar! ¿Qué hacemos?', 'Aquí estoy. ¿Le seguimos al proyecto?'][Math.floor(Math.random() * 3)]);
+  }, 1200));
+}
+
+// "ya terminamos": say goodbye, leave the guardian listening, and close completely (frees all its memory)
+function hideToStandby() {
+  shutUp(); endSim(true); endFind(); tour = null;
+  sendState('saludar');
+  say('Va. Aquí estaré. Di: Obsi, a trabajar, cuando me necesites.');
+  dbg('hidden: guardian');
+  setTimeout(async () => { await startGuardian(); app.quit(); }, 3500);
 }
 
 // ---------- guided tour ----------
@@ -770,12 +813,12 @@ function startServer() {
   const server = http.createServer((req, res) => {
     if (process.env.OBSI_DEBUG && req.method === 'GET' && req.url.startsWith('/test-audio') && testAudio) {
       res.writeHead(200, { 'Content-Type': 'audio/wav', 'Access-Control-Allow-Origin': '*' });
-      fs.createReadStream(testAudio).pipe(res); return;
+      fs.createReadStream(testAudio).on('error', () => res.destroy()).pipe(res); return;
     }
     // the ear window's Web Worker downloads the speech model from here (it can't read file:// URLs)
     if (req.method === 'GET' && req.url === '/modelo-voz.tar.gz' && voiceModel.exists()) {
       res.writeHead(200, { 'Content-Type': 'application/gzip', 'Access-Control-Allow-Origin': '*' });
-      fs.createReadStream(voiceModel.MODEL_FILE).pipe(res); return;
+      fs.createReadStream(voiceModel.MODEL_FILE).on('error', () => res.destroy()).pipe(res); return;
     }
     if (req.method !== 'POST' || req.url !== '/event') { res.writeHead(404).end(); return; }
     let body = '';
@@ -795,6 +838,7 @@ function onEditorEvent(ev) {
   // debug only: simulate typing in the chat or pressing a chat button
   if (process.env.OBSI_DEBUG && ev.type === 'say') return chat(ev.text);
   if (process.env.OBSI_DEBUG && ev.type === 'act') return handleAction(ev.value);
+  if (process.env.OBSI_DEBUG && ev.type === 'voice') return voiceCommand(ev.text);
   // debug only: run a wav file through the ear as if you had spoken it
   if (process.env.OBSI_DEBUG && ev.type === 'eartest') {
     testAudio = ev.wav;
@@ -864,7 +908,8 @@ ipcMain.on('menu', () => {
         label: l, type: 'radio', checked: settings.voiceName === v,
         click: () => { settings.voiceName = v; saveSettings(); say(`Hola, ahora hablo con la voz de ${l}.`); },
       })) },
-    { label: 'Iniciar con Windows', type: 'checkbox', checked: settings.autostart, click: i => setAutostart(i.checked) },
+    { label: 'Esperarme al prender la compu («Obsi, a trabajar»)', type: 'checkbox', checked: settings.autostart, click: i => setAutostart(i.checked) },
+    { label: 'Esconderme (sigo escuchando)', click: () => hideToStandby() },
     { type: 'separator' },
     { label: 'Saludar', click: send('saludar') },
     { label: 'Celebrar', click: send('celebrar') },
@@ -889,11 +934,12 @@ app.whenReady().then(() => {
   dbg(`start online=${online} claude=${brain.findClaude()}`);
   brain.initCache(app.getPath('userData'));
   brain.initTours(app.getPath('userData'));
-  createWindow();
   startServer();
-  globalShortcut.register('Control+Alt+Space', listenNow);
+  globalShortcut.register('Control+Alt+Space', () => (win ? listenNow() : appear()));
+  createWindow();
+  if (process.argv.includes('--despertar')) greetOnWake();
   if (settings.listen && voiceModel.exists()) setTimeout(() => ensureEar().then(() => setEarMode('wake', 'wake')).catch(() => {}), 3000);
 });
-app.on('second-instance', () => sendState('saludar', 'reposo', 2800));
+app.on('second-instance', () => (win ? sendState('saludar', 'reposo', 2800) : appear()));
 app.on('before-quit', () => { clearInterval(cursorTimer); clearInterval(dragTimer); clearInterval(quizTimer); brain.cancel(); globalShortcut.unregisterAll(); });
 app.on('window-all-closed', () => app.quit());
