@@ -132,7 +132,7 @@ function createWindow() {
 }
 
 // ---------- chat bubble window ----------
-const BUBBLE_W = 370;
+const BUBBLE_W = 420;            // glass panel (~360) + the strip on the robot's side where the energy arc is drawn
 function createBubble() {
   bubble = new BrowserWindow({
     width: BUBBLE_W, height: bubbleHeight, show: false,
@@ -152,17 +152,21 @@ function placeBubble() {
   const b = win.getBounds();
   const wa = screen.getDisplayMatching(b).workArea;
   const overlap = Math.round(b.width*0.14);              // the robot window has transparent margins
-  let x = b.x - BUBBLE_W + overlap;                      // prefer the left side of the robot
-  if (x < wa.x) x = b.x + b.width - overlap;             // no room: right side
+  let x = b.x - BUBBLE_W + overlap, side = 'left';       // prefer the left side of the robot
+  if (x < wa.x) { x = b.x + b.width - overlap; side = 'right'; }   // no room: right side
+  if (side !== bubbleSide) { bubbleSide = side; bubble.webContents.send('side', side); }   // arc + border glow point at him
   let y = Math.round(b.y + b.height*0.55 - bubbleHeight);  // bottom of the chat near the robot's middle
   y = Math.max(wa.y + 4, Math.min(y, wa.y + wa.height - bubbleHeight - 4));
   bubble.setBounds({ x: Math.round(x), y, width: BUBBLE_W, height: bubbleHeight });
 }
+let bubbleSide = null;
+const sendContext = () => bubble && !bubble.isDestroyed() && bubble.webContents.send('context', ctx.file ? path.basename(ctx.file) : null);
 
 function openPanel({ focus = false } = {}) {
   if (!bubble) return;
   bubbleOpen = true;
   bubble.webContents.send('open', { focus });
+  sendContext();
   placeBubble();
   if (focus) { bubble.show(); bubble.focus(); }
   else if (!bubble.isVisible()) bubble.showInactive();
@@ -848,6 +852,7 @@ function onEditorEvent(ev) {
   ctx.focused = !!ev.focused;
   if (ev.file !== undefined) {
     ctx.file = ev.file; ctx.workspace = ev.workspace || null; ctx.languageId = ev.languageId || null;
+    if (ctx.file !== prevFile) sendContext();
     if (ctx.workspace && ctx.workspace !== settings.lastWorkspace) { settings.lastWorkspace = ctx.workspace; saveSettings(); }
   }
   if (pendingFind && ctx.file && ctx.file !== prevFile) { clearTimeout(findTimer); findTimer = setTimeout(checkFind, 1500); return; }

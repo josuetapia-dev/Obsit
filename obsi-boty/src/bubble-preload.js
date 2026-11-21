@@ -18,4 +18,6 @@ contextBridge.exposeInMainWorld('bubble', {
   listenNow: () => ipcRenderer.send('listen-now'),
   onListening: cb => ipcRenderer.on('listening', (_e, on) => cb(on)),
   onPartial: cb => ipcRenderer.on('partial', (_e, t) => cb(t)),
+  onContext: cb => ipcRenderer.on('context', (_e, name) => cb(name)),   // file Obsi-boty is looking at
+  onSide: cb => ipcRenderer.on('side', (_e, side) => cb(side)),         // 'left' | 'right' of the robot
 });
